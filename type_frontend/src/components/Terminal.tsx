@@ -16,64 +16,89 @@ const Terminal: React.FC = () => {
     // Initialize socket connection
     socketRef.current = io("http://localhost:3001");
 
-    // Initialize terminal
-    const term = new XTerm({
-      cursorBlink: true,
-      theme: {
-        background: "#1e1e1e",
-        foreground: "#f0f0f0",
-      },
-      fontFamily: "monospace",
-      fontSize: 14,
-      scrollback: 1000,
-    });
+    // Initialize terminal with more robust error handling
+    try {
+      const term = new XTerm({
+        cursorBlink: true,
+        theme: {
+          background: "#1e1e1e",
+          foreground: "#f0f0f0",
+        },
+        fontFamily: "monospace",
+        fontSize: 14,
+        scrollback: 1000,
+        allowTransparency: true, // Add transparency support
+      });
 
-    terminalInstance.current = term;
+      terminalInstance.current = term;
 
-    // Initialize addons
-    const fitAddon = new FitAddon();
-    fitAddonRef.current = fitAddon;
-    const webLinksAddon = new WebLinksAddon();
+      // Initialize addons
+      const fitAddon = new FitAddon();
+      fitAddonRef.current = fitAddon;
+      const webLinksAddon = new WebLinksAddon();
 
-    terminalInstance.current.loadAddon(fitAddonRef.current);
-    terminalInstance.current.loadAddon(webLinksAddon);
+      term.loadAddon(fitAddon);
+      term.loadAddon(webLinksAddon);
+    } catch (e) {
+      console.error("Error initializing terminal:", e);
+    }
 
     // Open terminal
-    if (terminalRef.current) {
+    if (terminalRef.current && terminalInstance.current) {
       terminalInstance.current.open(terminalRef.current);
-      fitAddonRef.current.fit();
+      // Delay the initial fit to ensure the terminal is fully rendered
+      setTimeout(() => {
+        if (fitAddonRef.current) {
+          try {
+            fitAddonRef.current.fit();
+          } catch (e) {
+            console.error("Error fitting terminal:", e);
+          }
+        }
+      }, 100);
     }
 
     // Handle terminal output from server
-    socketRef.current.on("output", (data: string) => {
-      if (terminalInstance.current) {
-        terminalInstance.current.write(data);
-      }
-    });
+    if (socketRef.current) {
+      socketRef.current.on("output", (data: string) => {
+        if (terminalInstance.current) {
+          terminalInstance.current.write(data);
+        }
+      });
+    }
 
     // Handle user input
-    terminalInstance.current.onData((data: string) => {
-      if (socketRef.current) {
-        socketRef.current.emit("input", data);
-      }
-    });
+    if (terminalInstance.current) {
+      terminalInstance.current.onData((data: string) => {
+        if (socketRef.current) {
+          socketRef.current.emit("input", data);
+        }
+      });
+    }
 
     // Handle window resize
     const handleResize = () => {
       if (fitAddonRef.current && terminalInstance.current) {
-        fitAddonRef.current.fit();
-        const dimensions = {
-          cols: terminalInstance.current.cols,
-          rows: terminalInstance.current.rows,
-        };
-        if (socketRef.current) {
-          socketRef.current.emit("resize", dimensions);
+        try {
+          fitAddonRef.current.fit();
+          // Only emit resize after a successful fit
+          const dimensions = {
+            cols: terminalInstance.current.cols,
+            rows: terminalInstance.current.rows,
+          };
+          if (socketRef.current) {
+            socketRef.current.emit("resize", dimensions);
+          }
+        } catch (e) {
+          console.error("Error during resize:", e);
         }
       }
     };
 
     window.addEventListener("resize", handleResize);
-    handleResize(); // Initial fit
+
+    // Delay the initial resize to ensure terminal is ready
+    setTimeout(handleResize, 100);
 
     // Clean up
     return () => {

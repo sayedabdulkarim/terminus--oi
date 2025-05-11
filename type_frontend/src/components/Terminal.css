@@ -1,0 +1,33 @@
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  background-color: #1e1e1e;
+  padding: 5px;
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+/* Override xterm cursor to make it more visible */
+.xterm-cursor {
+  background-color: #fff !important;
+  border-color: #fff !important;
+}
+
+/* Custom scrollbar for the terminal */
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+  background: #333;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: #666;
+  border-radius: 4px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #888;
+}

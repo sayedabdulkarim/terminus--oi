@@ -6,7 +6,11 @@ import { Socket, io } from "socket.io-client";
 import "xterm/css/xterm.css";
 import "./Terminal.css";
 
-const Terminal: React.FC = () => {
+interface TerminalProps {
+  addErrorMessage: (message: string) => void;
+}
+
+const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<XTerm | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -96,10 +100,8 @@ const Terminal: React.FC = () => {
 
               if (errorMessage) {
                 console.log("Error message found:", errorMessage);
-                // Use setTimeout to ensure the alert doesn't get blocked
-                setTimeout(() => {
-                  alert(`Terminal error detected: ${errorMessage.trim()}`);
-                }, 100);
+                // Instead of alert, send to chat panel
+                addErrorMessage(errorMessage.trim());
               }
             }
           } catch (err) {
@@ -152,7 +154,7 @@ const Terminal: React.FC = () => {
         socketRef.current.disconnect();
       }
     };
-  }, []);
+  }, [addErrorMessage]);
 
   return <div ref={terminalRef} className="terminal-container" />;
 };

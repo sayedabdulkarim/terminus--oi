@@ -30,6 +30,20 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
         /cannot access/i,
         /error:/i,
         /failed:/i,
+        /bad option/i,
+        /not a directory/i,
+        /not recognized/i,
+        /invalid/i,
+        /missing/i,
+        /unexpected/i,
+        /unrecognized option/i,
+        /invalid option/i,
+        /syntax error/i,
+        /segmentation fault/i,
+        /traceback/i,
+        /exception/i,
+        /cannot/i,
+        /could not/i,
       ];
 
       try {

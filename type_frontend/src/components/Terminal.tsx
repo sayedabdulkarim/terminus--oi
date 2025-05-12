@@ -58,11 +58,53 @@ const Terminal: React.FC = () => {
       }, 100);
     }
 
-    // Handle terminal output from server
+    // Handle terminal output from server and detect errors
     if (socketRef.current) {
       socketRef.current.on("output", (data: string) => {
         if (terminalInstance.current) {
           terminalInstance.current.write(data);
+
+          // Debug the received data
+          console.log("Terminal output received:", JSON.stringify(data));
+
+          // Check for common error messages in the output
+          const errorPatterns = [
+            /command not found/i,
+            /permission denied/i,
+            /no such file or directory/i,
+            /cannot access/i,
+            /error:/i,
+            /failed:/i,
+          ];
+
+          try {
+            // Check if any error pattern matches the data
+            const hasError = errorPatterns.some((pattern) =>
+              pattern.test(data)
+            );
+
+            if (hasError) {
+              console.log("Error pattern detected in:", data);
+
+              // Split by both \n and \r\n to handle different line endings
+              const lines = data.split(/\r?\n/).filter((line) => line.trim());
+
+              // Find the specific line containing the error
+              const errorMessage = lines.find((line) =>
+                errorPatterns.some((pattern) => pattern.test(line))
+              );
+
+              if (errorMessage) {
+                console.log("Error message found:", errorMessage);
+                // Use setTimeout to ensure the alert doesn't get blocked
+                setTimeout(() => {
+                  alert(`Terminal error detected: ${errorMessage.trim()}`);
+                }, 100);
+              }
+            }
+          } catch (err) {
+            console.error("Error in terminal error detection:", err);
+          }
         }
       });
     }

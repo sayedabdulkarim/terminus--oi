@@ -16,6 +16,8 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
   const socketRef = useRef<Socket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const processingErrorRef = useRef<boolean>(false);
+  const lastCommandRef = useRef<string>("");
+  const currentCommandRef = useRef<string>("");
 
   // Memoize the error detection function to prevent re-creating it on each render
   const detectAndHandleError = useCallback(
@@ -63,9 +65,16 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
           );
 
           if (errorMessage) {
+            // Format error to include the last command
+            const formattedError = lastCommandRef.current
+              ? `Error after: ${
+                  lastCommandRef.current
+                }\n→ ${errorMessage.trim()}`
+              : errorMessage.trim();
+
             // Use requestAnimationFrame to avoid blocking the UI
             requestAnimationFrame(() => {
-              addErrorMessage(errorMessage.trim());
+              addErrorMessage(formattedError);
               // Reset the processing flag after a small delay
               setTimeout(() => {
                 processingErrorRef.current = false;
@@ -145,6 +154,23 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
       terminalInstance.current.onData((data: string) => {
         if (socketRef.current) {
           socketRef.current.emit("input", data);
+
+          // Track command as user types
+          if (data === "\r") {
+            // Enter key pressed - save the current command as the last command and reset
+            lastCommandRef.current = currentCommandRef.current;
+            currentCommandRef.current = "";
+          } else if (data === "\u007F") {
+            // Backspace key - remove last character
+            currentCommandRef.current = currentCommandRef.current.slice(0, -1);
+          } else if (data === "\u0003") {
+            // Ctrl+C - clear current command
+            currentCommandRef.current = "";
+          } else if (!data.startsWith("\u001b")) {
+            // Ignore escape sequences and other control characters
+            // Only track printable characters
+            currentCommandRef.current += data;
+          }
         }
       });
     }

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import "./App.css";
 import Terminal from "./components/Terminal";
 import ChatPanel from "./components/ChatPanel";
@@ -20,7 +20,8 @@ function App() {
     },
   ]);
 
-  const addMessage = (text: string, isError: boolean) => {
+  // Memoize addMessage to prevent unnecessary re-renders
+  const addMessage = useCallback((text: string, isError: boolean) => {
     setMessages((prevMessages) => [
       ...prevMessages,
       {
@@ -30,7 +31,15 @@ function App() {
         timestamp: new Date(),
       },
     ]);
-  };
+  }, []);
+
+  // Memoize addErrorMessage for Terminal component
+  const addErrorMessage = useCallback(
+    (message: string) => {
+      addMessage(message, true);
+    },
+    [addMessage]
+  );
 
   return (
     <div className="App">
@@ -39,7 +48,7 @@ function App() {
           <ChatPanel messages={messages} addMessage={addMessage} />
         </div>
         <div className="terminal-side">
-          <Terminal addErrorMessage={(message) => addMessage(message, true)} />
+          <Terminal addErrorMessage={addErrorMessage} />
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
@@ -15,6 +15,59 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
   const terminalInstance = useRef<XTerm | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const processingErrorRef = useRef<boolean>(false);
+
+  // Memoize the error detection function to prevent re-creating it on each render
+  const detectAndHandleError = useCallback(
+    (data: string) => {
+      // Don't process if we're already handling an error
+      if (processingErrorRef.current) return;
+
+      const errorPatterns = [
+        /command not found/i,
+        /permission denied/i,
+        /no such file or directory/i,
+        /cannot access/i,
+        /error:/i,
+        /failed:/i,
+      ];
+
+      try {
+        // Check if any error pattern matches the data
+        const hasError = errorPatterns.some((pattern) => pattern.test(data));
+
+        if (hasError) {
+          // Set processing flag to prevent re-entrancy
+          processingErrorRef.current = true;
+
+          // Split by both \n and \r\n to handle different line endings
+          const lines = data.split(/\r?\n/).filter((line) => line.trim());
+
+          // Find the specific line containing the error
+          const errorMessage = lines.find((line) =>
+            errorPatterns.some((pattern) => pattern.test(line))
+          );
+
+          if (errorMessage) {
+            // Use requestAnimationFrame to avoid blocking the UI
+            requestAnimationFrame(() => {
+              addErrorMessage(errorMessage.trim());
+              // Reset the processing flag after a small delay
+              setTimeout(() => {
+                processingErrorRef.current = false;
+              }, 300);
+            });
+          } else {
+            processingErrorRef.current = false;
+          }
+        }
+      } catch (err) {
+        console.error("Error in terminal error detection:", err);
+        processingErrorRef.current = false;
+      }
+    },
+    [addErrorMessage]
+  );
 
   useEffect(() => {
     // Initialize socket connection
@@ -67,46 +120,8 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
       socketRef.current.on("output", (data: string) => {
         if (terminalInstance.current) {
           terminalInstance.current.write(data);
-
-          // Debug the received data
-          console.log("Terminal output received:", JSON.stringify(data));
-
-          // Check for common error messages in the output
-          const errorPatterns = [
-            /command not found/i,
-            /permission denied/i,
-            /no such file or directory/i,
-            /cannot access/i,
-            /error:/i,
-            /failed:/i,
-          ];
-
-          try {
-            // Check if any error pattern matches the data
-            const hasError = errorPatterns.some((pattern) =>
-              pattern.test(data)
-            );
-
-            if (hasError) {
-              console.log("Error pattern detected in:", data);
-
-              // Split by both \n and \r\n to handle different line endings
-              const lines = data.split(/\r?\n/).filter((line) => line.trim());
-
-              // Find the specific line containing the error
-              const errorMessage = lines.find((line) =>
-                errorPatterns.some((pattern) => pattern.test(line))
-              );
-
-              if (errorMessage) {
-                console.log("Error message found:", errorMessage);
-                // Instead of alert, send to chat panel
-                addErrorMessage(errorMessage.trim());
-              }
-            }
-          } catch (err) {
-            console.error("Error in terminal error detection:", err);
-          }
+          // Process error detection in an optimized way
+          detectAndHandleError(data);
         }
       });
     }
@@ -154,7 +169,7 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
         socketRef.current.disconnect();
       }
     };
-  }, [addErrorMessage]);
+  }, [addErrorMessage, detectAndHandleError]);
 
   return <div ref={terminalRef} className="terminal-container" />;
 };

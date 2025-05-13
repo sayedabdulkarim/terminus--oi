@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
 import { Socket, io } from "socket.io-client";
+import { commandFixerAgent } from "../utils/commandFixerAgent";
 import "xterm/css/xterm.css";
 import "./Terminal.css";
 
@@ -73,8 +74,29 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
               : errorMessage.trim();
 
             // Use requestAnimationFrame to avoid blocking the UI
-            requestAnimationFrame(() => {
+            requestAnimationFrame(async () => {
               addErrorMessage(formattedError);
+
+              // Try to suggest a fixed command if there's a last command
+              if (lastCommandRef.current) {
+                try {
+                  // Get a suggested fix from the command fixer agent
+                  const suggestedFix = await commandFixerAgent(
+                    lastCommandRef.current,
+                    errorMessage.trim()
+                  );
+
+                  // Only suggest if the fix is different from the original command
+                  if (suggestedFix && suggestedFix !== lastCommandRef.current) {
+                    addErrorMessage(
+                      `Suggestion: Try this instead: ${suggestedFix}`
+                    );
+                  }
+                } catch (err) {
+                  console.error("Error getting command suggestion:", err);
+                }
+              }
+
               // Reset the processing flag after a small delay
               setTimeout(() => {
                 processingErrorRef.current = false;

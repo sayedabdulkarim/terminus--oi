@@ -37,6 +37,8 @@ const Terminal: React.FC<TerminalProps> = ({
   const lastErrorRef = useRef<string>(""); // Track the last error we processed
   const commandHistoryRef = useRef<string[]>([]); // Track recent commands
   const processedPairsRef = useRef<Set<string>>(new Set()); // Track command+error pairs we've already processed
+  const timeoutIdsRef = useRef<NodeJS.Timeout[]>([]); // Store all timeout IDs for cleanup
+  const resizeObserverRef = useRef<ResizeObserver | null>(null); // Track ResizeObserver for cleanup
 
   // Execute a command in the terminal
   const executeCommand = useCallback((command: string) => {
@@ -56,8 +58,9 @@ const Terminal: React.FC<TerminalProps> = ({
       } catch (e) {
         console.error("Error executing command:", e);
         // Try to recover if possible
-        setTimeout(() => {
-          if (socketRef.current) {
+        const recoveryTimeout = setTimeout(() => {
+          // Check if references are still valid
+          if (socketRef.current && command) {
             try {
               socketRef.current.emit("input", command + "\r");
             } catch (innerE) {
@@ -65,6 +68,9 @@ const Terminal: React.FC<TerminalProps> = ({
             }
           }
         }, 100);
+
+        // Add to timeout tracking for cleanup
+        timeoutIdsRef.current.push(recoveryTimeout);
       }
     } else {
       console.error("Cannot execute command: terminal or socket not available");
@@ -168,30 +174,38 @@ const Terminal: React.FC<TerminalProps> = ({
             // 0. Command not found errors - always use the exact command that caused the error
             if (errorMessage.includes("command not found")) {
               // First try the more specific shell error format (zsh: command not found: mk)
-              const shellErrorMatch = errorMessage.match(/\w+:\s+command not found:\s+(\w+)/i);
+              const shellErrorMatch = errorMessage.match(
+                /\w+:\s+command not found:\s+(\w+)/i
+              );
               let commandName: string | undefined;
-              
+
               if (shellErrorMatch && shellErrorMatch[1]) {
                 // This matches patterns like "zsh: command not found: mk"
                 commandName = shellErrorMatch[1].trim();
                 console.log("📍 Shell command not found:", commandName);
               } else {
                 // Fall back to the original pattern for errors like "command: command not found"
-                const commandMatch = errorMessage.match(/([^\s:]+):\s+command not found/);
+                const commandMatch = errorMessage.match(
+                  /([^\s:]+):\s+command not found/
+                );
                 if (commandMatch && commandMatch[1]) {
                   commandName = commandMatch[1].trim();
                   console.log("📍 Basic command not found for:", commandName);
                 }
               }
-              
+
               if (commandName) {
                 // Check command history to see if this command was recently used
                 const recentCommand = commandHistoryRef.current.find(
-                  (cmd) => cmd === commandName || cmd.startsWith(commandName + " ")
+                  (cmd) =>
+                    cmd === commandName || cmd.startsWith(commandName + " ")
                 );
 
                 if (recentCommand) {
-                  console.log("Found matching command in history:", recentCommand);
+                  console.log(
+                    "Found matching command in history:",
+                    recentCommand
+                  );
                   lastCommandRef.current = recentCommand;
                 }
                 // If the last command doesn't match what the error says, update it
@@ -208,7 +222,9 @@ const Terminal: React.FC<TerminalProps> = ({
 
                 // For command not found errors, we want to ensure we get fresh suggestions
                 // each time, so completely reset all processed pairs
-                console.log("Command not found - completely resetting processed pairs");
+                console.log(
+                  "Command not found - completely resetting processed pairs"
+                );
                 processedPairsRef.current = new Set();
               }
             }
@@ -432,15 +448,21 @@ const Terminal: React.FC<TerminalProps> = ({
               }
 
               // Reset the processing flag after a small delay
-              setTimeout(() => {
-                processingErrorRef.current = false;
+              const errorResetTimeout = setTimeout(() => {
+                // Check if component is still mounted before updating refs
+                if (processingErrorRef.current !== undefined) {
+                  processingErrorRef.current = false;
 
-                // Also reset the current command ref to ensure we don't
-                // track commands incorrectly after errors
-                if (currentCommandRef.current === lastCommandRef.current) {
-                  currentCommandRef.current = "";
+                  // Also reset the current command ref to ensure we don't
+                  // track commands incorrectly after errors
+                  if (currentCommandRef.current === lastCommandRef.current) {
+                    currentCommandRef.current = "";
+                  }
                 }
               }, 300);
+
+              // Store the timeout ID for cleanup
+              timeoutIdsRef.current.push(errorResetTimeout);
             });
           } else {
             processingErrorRef.current = false;
@@ -453,13 +475,86 @@ const Terminal: React.FC<TerminalProps> = ({
     },
     [addErrorMessage, addMessage, addSuggestions]
   );
-
   useEffect(() => {
-    // Initialize socket connection
-    socketRef.current = io("http://localhost:3001");
+    console.log("Initializing terminal component");
 
-    // Initialize terminal with more robust error handling
+    // Helper function for safer terminal fitting
+    const runSafeFit = () => {
+      if (
+        fitAddonRef.current &&
+        terminalInstance.current &&
+        terminalRef.current &&
+        document.body.contains(terminalRef.current)
+      ) {
+        try {
+          // Check for valid dimensions before attempting fit
+          if (
+            terminalRef.current.offsetWidth > 0 &&
+            terminalRef.current.offsetHeight > 0
+          ) {
+            console.log("Running safe fit with dimensions:", {
+              width: terminalRef.current.offsetWidth,
+              height: terminalRef.current.offsetHeight,
+            });
+
+            fitAddonRef.current.fit();
+
+            // Verify dimensions exist after fit before emitting
+            if (
+              terminalInstance.current &&
+              typeof terminalInstance.current.cols === "number" &&
+              typeof terminalInstance.current.rows === "number"
+            ) {
+              console.log("Terminal dimensions after fit:", {
+                cols: terminalInstance.current.cols,
+                rows: terminalInstance.current.rows,
+              });
+
+              if (socketRef.current) {
+                socketRef.current.emit("resize", {
+                  cols: terminalInstance.current.cols,
+                  rows: terminalInstance.current.rows,
+                });
+              }
+            } else {
+              console.warn(
+                "Terminal dimensions unavailable after fit:",
+                terminalInstance.current
+              );
+            }
+          } else {
+            console.warn("Terminal container has no dimensions for fit");
+          }
+        } catch (e) {
+          console.error("Error in safe fit:", e);
+        }
+      } else {
+        console.warn("Missing references for safe fit");
+      }
+    };
+
+    // Initialize socket connection
     try {
+      socketRef.current = io("http://localhost:3001");
+      console.log("Socket connection initialized");
+    } catch (err) {
+      console.error("Error initializing socket connection:", err);
+    }
+
+    // Properly clean up any existing terminal instance
+    if (terminalInstance.current) {
+      try {
+        console.log("Disposing previous terminal instance");
+        terminalInstance.current.dispose();
+        terminalInstance.current = null;
+      } catch (err) {
+        console.error("Error disposing previous terminal instance:", err);
+      }
+    }
+
+    // Initialize terminal with robust error handling
+    try {
+      // Create new terminal instance
       const term = new XTerm({
         cursorBlink: true,
         theme: {
@@ -469,10 +564,11 @@ const Terminal: React.FC<TerminalProps> = ({
         fontFamily: "monospace",
         fontSize: 14,
         scrollback: 1000,
-        allowTransparency: true, // Add transparency support
+        allowTransparency: true,
       });
 
       terminalInstance.current = term;
+      console.log("Terminal instance created");
 
       // Initialize addons
       const fitAddon = new FitAddon();
@@ -481,55 +577,101 @@ const Terminal: React.FC<TerminalProps> = ({
 
       term.loadAddon(fitAddon);
       term.loadAddon(webLinksAddon);
+      console.log("Terminal addons loaded");
     } catch (e) {
       console.error("Error initializing terminal:", e);
     }
 
+    // Make sure we have a valid terminal element before opening
+    if (!terminalRef.current) {
+      console.error("Terminal container reference is not available");
+      return;
+    }
+
     // Open terminal
     if (terminalRef.current && terminalInstance.current) {
-      terminalInstance.current.open(terminalRef.current);
+      try {
+        terminalInstance.current.open(terminalRef.current);
+        console.log("Terminal opened successfully");
 
-      // Ensure terminal is properly mounted and visible before fitting
-      // Delay the initial fit to ensure the terminal is fully rendered
-      setTimeout(() => {
-        if (
-          fitAddonRef.current &&
-          terminalInstance.current &&
-          terminalRef.current
-        ) {
-          try {
-            // Check that terminal element has dimensions before fitting
-            const termElement = terminalRef.current;
-            if (
-              termElement &&
-              termElement.offsetWidth > 0 &&
-              termElement.offsetHeight > 0
-            ) {
-              fitAddonRef.current.fit();
-            } else {
-              console.warn(
-                "Terminal container has no dimensions yet, delaying fit"
-              );
-              // Try again after another delay if dimensions aren't available
-              setTimeout(() => {
-                try {
-                  if (
-                    fitAddonRef.current &&
-                    terminalRef.current &&
-                    terminalRef.current.offsetWidth > 0
-                  ) {
-                    fitAddonRef.current.fit();
-                  }
-                } catch (e) {
-                  console.error("Error in delayed terminal fitting:", e);
-                }
-              }, 300);
-            }
-          } catch (e) {
-            console.error("Error fitting terminal:", e);
+        // Give the DOM time to properly update and render the terminal
+        // before attempting to access dimensions or fit
+        const domUpdateDelay = setTimeout(() => {
+          // Double check that elements are still valid after the timeout
+          if (
+            !terminalRef.current ||
+            !terminalInstance.current ||
+            !fitAddonRef.current
+          ) {
+            console.warn(
+              "Terminal references lost during initialization delay"
+            );
+            return;
           }
-        }
-      }, 100);
+
+          // Initialize ResizeObserver for more reliable dimension tracking
+          // This addresses issues with dimensions during page reloads
+          try {
+            // Remove any existing observer first
+            if (resizeObserverRef.current) {
+              resizeObserverRef.current.disconnect();
+            }
+
+            // Create new observer
+            resizeObserverRef.current = new ResizeObserver(() => {
+              // Only run fit if all components exist and terminal is visible
+              if (
+                fitAddonRef.current &&
+                terminalInstance.current &&
+                terminalRef.current &&
+                document.body.contains(terminalRef.current) &&
+                terminalRef.current.offsetWidth > 0 &&
+                terminalRef.current.offsetHeight > 0
+              ) {
+                try {
+                  // Safety check for valid cols and rows before fit
+                  fitAddonRef.current.fit();
+
+                  // Only emit resize after confirming dimensions exist
+                  if (
+                    terminalInstance.current.cols &&
+                    terminalInstance.current.rows
+                  ) {
+                    if (socketRef.current) {
+                      socketRef.current.emit("resize", {
+                        cols: terminalInstance.current.cols,
+                        rows: terminalInstance.current.rows,
+                      });
+                    }
+                  }
+                } catch (fitErr) {
+                  console.error("Error in ResizeObserver fit:", fitErr);
+                }
+              }
+            });
+
+            // Start observing the terminal container
+            resizeObserverRef.current.observe(terminalRef.current);
+            console.log("ResizeObserver attached to terminal");
+
+            // Initial fit after terminal initialization
+            runSafeFit();
+          } catch (resizeObserverErr) {
+            console.error(
+              "Error setting up ResizeObserver:",
+              resizeObserverErr
+            );
+            // Fall back to manual fit logic if ResizeObserver fails
+            runSafeFit();
+          }
+        }, 150); // Slightly longer delay to ensure DOM is ready
+
+        timeoutIdsRef.current.push(domUpdateDelay);
+      } catch (err) {
+        console.error("Error opening terminal:", err);
+      } // Ensure terminal is properly mounted and visible before fitting
+      // This is now handled by ResizeObserver and runSafeFit
+      // No need for the delayed manual fit attempts
     }
 
     // Handle terminal output from server and detect errors
@@ -572,14 +714,17 @@ const Terminal: React.FC<TerminalProps> = ({
 
               // Update the last command reference with the current command
               lastCommandRef.current = trimmedCommand;
-              
+
               // Also track this in command history
               if (!commandHistoryRef.current.includes(trimmedCommand)) {
                 commandHistoryRef.current.push(trimmedCommand);
                 if (commandHistoryRef.current.length > 10) {
                   commandHistoryRef.current.shift();
                 }
-                console.log("Updated command history:", commandHistoryRef.current);
+                console.log(
+                  "Updated command history:",
+                  commandHistoryRef.current
+                );
               }
 
               // Enhanced tracking for specific commands known to cause errors
@@ -654,66 +799,80 @@ const Terminal: React.FC<TerminalProps> = ({
 
     // Handle window resize
     const handleResize = () => {
-      if (
-        fitAddonRef.current &&
-        terminalInstance.current &&
-        terminalRef.current
-      ) {
-        try {
-          // Check that the terminal element has dimensions before fitting
-          if (
-            terminalRef.current.offsetWidth > 0 &&
-            terminalRef.current.offsetHeight > 0
-          ) {
-            fitAddonRef.current.fit();
-            // Only emit resize after a successful fit
-            const dimensions = {
-              cols: terminalInstance.current.cols,
-              rows: terminalInstance.current.rows,
-            };
-            if (socketRef.current) {
-              socketRef.current.emit("resize", dimensions);
-            }
-          } else {
-            console.warn("Terminal container has no dimensions during resize");
-          }
-        } catch (e) {
-          console.error("Error during resize:", e);
-        }
-      }
+      // Use the safer fit method that includes all necessary checks
+      runSafeFit();
     };
 
     window.addEventListener("resize", handleResize);
 
     // Delay the initial resize to ensure terminal is ready
-    setTimeout(handleResize, 100);
+    const initialResizeTimeout = setTimeout(handleResize, 100);
+    timeoutIdsRef.current.push(initialResizeTimeout);
 
     // Clean up
     return () => {
+      console.log("Cleaning up terminal component...");
+
+      // First, remove event listeners
       window.removeEventListener("resize", handleResize);
 
-      // Ensure we clean up in the correct sequence
-      // First detach any events and processes
-      processingErrorRef.current = false;
-
-      // Then dispose of socket
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
+      // Disconnect ResizeObserver
+      if (resizeObserverRef.current) {
+        try {
+          resizeObserverRef.current.disconnect();
+          resizeObserverRef.current = null;
+          console.log("ResizeObserver disconnected");
+        } catch (err) {
+          console.error("Error disconnecting ResizeObserver:", err);
+        }
       }
 
-      // Finally dispose of terminal
+      // Clear any pending timeouts
+      if (timeoutIdsRef.current.length > 0) {
+        console.log(
+          `Clearing ${timeoutIdsRef.current.length} pending timeouts`
+        );
+        timeoutIdsRef.current.forEach((id) => clearTimeout(id));
+        timeoutIdsRef.current = [];
+      }
+
+      // Cleanup socket connection
+      if (socketRef.current) {
+        try {
+          socketRef.current.disconnect();
+          socketRef.current = null;
+          console.log("Socket disconnected");
+        } catch (socketErr) {
+          console.error("Error disconnecting socket:", socketErr);
+        }
+      }
+
+      // Cleanup fit addon
+      if (fitAddonRef.current) {
+        try {
+          fitAddonRef.current.dispose();
+          fitAddonRef.current = null;
+          console.log("FitAddon disposed");
+        } catch (fitErr) {
+          console.error("Error disposing fit addon:", fitErr);
+        }
+      }
+
+      // Cleanup terminal instance last
       if (terminalInstance.current) {
         try {
           terminalInstance.current.dispose();
           terminalInstance.current = null;
-        } catch (e) {
-          console.error("Error disposing terminal:", e);
+          console.log("Terminal instance disposed");
+        } catch (termErr) {
+          console.error("Error disposing terminal:", termErr);
         }
       }
 
-      // Clear addon references
-      fitAddonRef.current = null;
+      // Reset any remaining references as a safety measure
+      processingErrorRef.current = false;
+
+      console.log("Terminal cleanup complete");
     };
   }, [addErrorMessage, addSuggestions, detectAndHandleError, addMessage]);
 

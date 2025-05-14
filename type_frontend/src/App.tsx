@@ -69,11 +69,25 @@ function App() {
   // Run a command in the terminal
   const runCommand = useCallback(
     (command: string) => {
+      if (!command || typeof command !== "string") {
+        console.warn("Invalid command passed to runCommand:", command);
+        return;
+      }
+
       // The terminal component will expose this function globally
       if ((window as any).runTerminalCommand) {
-        (window as any).runTerminalCommand(command);
-        // Also add the command as a message to show what was executed
-        addMessage(`Executed: ${command}`, false);
+        try {
+          (window as any).runTerminalCommand(command);
+          // Also add the command as a message to show what was executed
+          addMessage(`Executed: ${command}`, false);
+        } catch (e) {
+          console.error("Error running command:", e);
+          // Add an error message if the command execution fails
+          addMessage(`Failed to execute: ${command}. Please try again.`, true);
+        }
+      } else {
+        console.warn("runTerminalCommand function not available");
+        addMessage(`Unable to run command: Terminal not ready`, true);
       }
     },
     [addMessage]

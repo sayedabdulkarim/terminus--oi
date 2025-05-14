@@ -35,13 +35,34 @@ const Terminal: React.FC<TerminalProps> = ({
 
   // Execute a command in the terminal
   const executeCommand = useCallback((command: string) => {
+    if (!command) {
+      console.warn("Attempted to execute empty command");
+      return;
+    }
+
     if (socketRef.current && terminalInstance.current) {
-      // Write the command to terminal
-      terminalInstance.current.write(command);
-      // Send command to server
-      socketRef.current.emit("input", command);
-      // Also send an Enter key to execute
-      socketRef.current.emit("input", "\r");
+      try {
+        // Write the command to terminal
+        terminalInstance.current.write(command);
+        // Send command to server
+        socketRef.current.emit("input", command);
+        // Also send an Enter key to execute
+        socketRef.current.emit("input", "\r");
+      } catch (e) {
+        console.error("Error executing command:", e);
+        // Try to recover if possible
+        setTimeout(() => {
+          if (socketRef.current) {
+            try {
+              socketRef.current.emit("input", command + "\r");
+            } catch (innerE) {
+              console.error("Retry command execution failed:", innerE);
+            }
+          }
+        }, 100);
+      }
+    } else {
+      console.error("Cannot execute command: terminal or socket not available");
     }
   }, []);
 
@@ -181,11 +202,43 @@ const Terminal: React.FC<TerminalProps> = ({
     // Open terminal
     if (terminalRef.current && terminalInstance.current) {
       terminalInstance.current.open(terminalRef.current);
+
+      // Ensure terminal is properly mounted and visible before fitting
       // Delay the initial fit to ensure the terminal is fully rendered
       setTimeout(() => {
-        if (fitAddonRef.current) {
+        if (
+          fitAddonRef.current &&
+          terminalInstance.current &&
+          terminalRef.current
+        ) {
           try {
-            fitAddonRef.current.fit();
+            // Check that terminal element has dimensions before fitting
+            const termElement = terminalRef.current;
+            if (
+              termElement &&
+              termElement.offsetWidth > 0 &&
+              termElement.offsetHeight > 0
+            ) {
+              fitAddonRef.current.fit();
+            } else {
+              console.warn(
+                "Terminal container has no dimensions yet, delaying fit"
+              );
+              // Try again after another delay if dimensions aren't available
+              setTimeout(() => {
+                try {
+                  if (
+                    fitAddonRef.current &&
+                    terminalRef.current &&
+                    terminalRef.current.offsetWidth > 0
+                  ) {
+                    fitAddonRef.current.fit();
+                  }
+                } catch (e) {
+                  console.error("Error in delayed terminal fitting:", e);
+                }
+              }, 300);
+            }
           } catch (e) {
             console.error("Error fitting terminal:", e);
           }
@@ -232,16 +285,28 @@ const Terminal: React.FC<TerminalProps> = ({
 
     // Handle window resize
     const handleResize = () => {
-      if (fitAddonRef.current && terminalInstance.current) {
+      if (
+        fitAddonRef.current &&
+        terminalInstance.current &&
+        terminalRef.current
+      ) {
         try {
-          fitAddonRef.current.fit();
-          // Only emit resize after a successful fit
-          const dimensions = {
-            cols: terminalInstance.current.cols,
-            rows: terminalInstance.current.rows,
-          };
-          if (socketRef.current) {
-            socketRef.current.emit("resize", dimensions);
+          // Check that the terminal element has dimensions before fitting
+          if (
+            terminalRef.current.offsetWidth > 0 &&
+            terminalRef.current.offsetHeight > 0
+          ) {
+            fitAddonRef.current.fit();
+            // Only emit resize after a successful fit
+            const dimensions = {
+              cols: terminalInstance.current.cols,
+              rows: terminalInstance.current.rows,
+            };
+            if (socketRef.current) {
+              socketRef.current.emit("resize", dimensions);
+            }
+          } else {
+            console.warn("Terminal container has no dimensions during resize");
           }
         } catch (e) {
           console.error("Error during resize:", e);
@@ -257,12 +322,29 @@ const Terminal: React.FC<TerminalProps> = ({
     // Clean up
     return () => {
       window.removeEventListener("resize", handleResize);
-      if (terminalInstance.current) {
-        terminalInstance.current.dispose();
-      }
+
+      // Ensure we clean up in the correct sequence
+      // First detach any events and processes
+      processingErrorRef.current = false;
+
+      // Then dispose of socket
       if (socketRef.current) {
         socketRef.current.disconnect();
+        socketRef.current = null;
       }
+
+      // Finally dispose of terminal
+      if (terminalInstance.current) {
+        try {
+          terminalInstance.current.dispose();
+          terminalInstance.current = null;
+        } catch (e) {
+          console.error("Error disposing terminal:", e);
+        }
+      }
+
+      // Clear addon references
+      fitAddonRef.current = null;
     };
   }, [addErrorMessage, addSuggestions, detectAndHandleError]);
 

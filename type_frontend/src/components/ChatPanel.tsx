@@ -1,19 +1,27 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./ChatPanel.css";
+import { CommandSuggestion } from "../utils/commandFixerAgent";
 
 interface Message {
   id: number;
   text: string;
   isError: boolean;
   timestamp: Date;
+  suggestions?: CommandSuggestion[];
+  isSuggestion?: boolean;
 }
 
 interface ChatPanelProps {
   messages: Message[];
   addMessage: (text: string, isError: boolean) => void;
+  runCommand?: (command: string) => void;
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ messages, addMessage }) => {
+const ChatPanel: React.FC<ChatPanelProps> = ({
+  messages,
+  addMessage,
+  runCommand,
+}) => {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -22,6 +30,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, addMessage }) => {
     if (inputValue.trim()) {
       addMessage(inputValue, false);
       setInputValue("");
+    }
+  };
+
+  const handleRunCommand = (command: string) => {
+    if (runCommand) {
+      runCommand(command);
     }
   };
 
@@ -37,22 +51,58 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ messages, addMessage }) => {
       </div>
 
       <div className="messages-container">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`message ${
-              message.isError ? "error-message" : "user-message"
-            }`}
-          >
-            <div className="message-time">
-              {message.timestamp.toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </div>
-            <div className="message-text">{message.text}</div>
-          </div>
-        ))}
+        {messages.map((message) => {
+          const messageDate = new Date(message.timestamp);
+          const timeString = messageDate.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+
+          return (
+            <React.Fragment key={message.id}>
+              <div className="message-time-header">{timeString}</div>
+
+              {message.isSuggestion ? (
+                <div className="message suggestion-message">
+                  <div className="message-text">
+                    <div className="suggestion-title">💡 Suggestions:</div>
+                    <ol className="suggestion-list">
+                      {message.suggestions?.map((suggestion, index) => (
+                        <li key={index} className="suggestion-item">
+                          <span className="suggestion-command">
+                            {suggestion.command}
+                          </span>
+                          <span className="suggestion-arrow">→</span>
+                          <span className="suggestion-desc">
+                            {suggestion.description}
+                          </span>
+                          {runCommand && (
+                            <button
+                              className="run-command-btn"
+                              onClick={() =>
+                                handleRunCommand(suggestion.command)
+                              }
+                            >
+                              Run
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className={`message ${
+                    message.isError ? "error-message" : "user-message"
+                  }`}
+                >
+                  <div className="message-text">{message.text}</div>
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 

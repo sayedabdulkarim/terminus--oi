@@ -1,39 +1,50 @@
 import axios from "axios";
 
+export interface CommandSuggestion {
+  command: string;
+  description: string;
+}
+
 /**
- * A helper function that uses the OpenRouter API to suggest a corrected shell command
+ * A helper function that uses the OpenRouter API to suggest corrected shell commands
  * based on the user's original command and the error message.
  *
  * @param userCommand The original command typed by the user
  * @param errorMessage The error message returned by the shell
- * @returns A promise that resolves to the corrected command as a string
+ * @returns A promise that resolves to an array of command suggestions
  */
 export async function commandFixerAgent(
   userCommand: string,
   errorMessage: string
-): Promise<string> {
+): Promise<CommandSuggestion[]> {
   // Get the API key from environment variable
   const apiKey = process.env.REACT_APP_OPENROUTER_API_KEY;
+
+  console.log("Command fixer agent called with:", {
+    userCommand,
+    errorMessage,
+    apiKeyAvailable: !!apiKey,
+  });
 
   if (!apiKey) {
     console.error(
       "OpenRouter API key not found. Set REACT_APP_OPENROUTER_API_KEY in your environment or .env file."
     );
-    return userCommand; // Return original command if API key is not available
+    return [{ command: userCommand, description: "No API key available" }];
   }
 
   const prompt = `You are an AI assistant that helps users correct invalid shell commands.
-Given the user's original command and the shell error message, return only the corrected shell command the user most likely intended to type.
+Given the user's original command and the shell error message, suggest multiple valid shell commands the user most likely meant.
 
-Example format:
-User command: node -ver
-Error message: /local/bin/node: bad option: -ver
+Format:
+1. <command> → <short description>
+2. <command> → <short description>
 
-Your response: node -v
-
-Do not add any explanation, markdown, or extra formatting — return only the fixed shell command as plain text.`;
+Do not add explanation or markdown.`;
 
   try {
+    console.log("Making API call to OpenRouter...");
+
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
@@ -45,7 +56,7 @@ Do not add any explanation, markdown, or extra formatting — return only the fi
             content: `User command: ${userCommand}\nError message: ${errorMessage}`,
           },
         ],
-        max_tokens: 50,
+        max_tokens: 150,
         temperature: 0.2, // Use a low temperature for more deterministic outputs
       },
       {
@@ -57,10 +68,42 @@ Do not add any explanation, markdown, or extra formatting — return only the fi
     );
 
     // Extract the response text from the API response
-    const fixedCommand = response.data.choices[0].message.content.trim();
-    return fixedCommand;
+    console.log("Received OpenRouter API response");
+    const suggestionsText = response.data.choices[0].message.content.trim();
+    console.log("Raw suggestions text:", suggestionsText);
+
+    // Parse the suggestions into an array of command objects
+    const suggestions = parseSuggestions(suggestionsText);
+    console.log("Parsed suggestions:", suggestions);
+
+    return suggestions.length > 0
+      ? suggestions
+      : [{ command: userCommand, description: "No suggestions available" }];
   } catch (error) {
     console.error("Error calling OpenRouter API:", error);
-    return userCommand; // Return original command on error
+    return [{ command: userCommand, description: "Error getting suggestions" }];
   }
+}
+
+/**
+ * Parses the suggestion text from the model into an array of CommandSuggestion objects
+ */
+function parseSuggestions(text: string): CommandSuggestion[] {
+  const suggestions: CommandSuggestion[] = [];
+
+  // Split by lines and process each line
+  const lines = text.split("\n");
+
+  for (const line of lines) {
+    // Look for lines with numbered suggestions like "1. command → description"
+    const match = line.match(/^\d+\.\s+([^→]+)→\s*(.+)$/);
+    if (match) {
+      suggestions.push({
+        command: match[1].trim(),
+        description: match[2].trim(),
+      });
+    }
+  }
+
+  return suggestions;
 }

@@ -3,15 +3,28 @@ import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
 import { Socket, io } from "socket.io-client";
-import { commandFixerAgent } from "../utils/commandFixerAgent";
+import {
+  commandFixerAgent,
+  CommandSuggestion,
+} from "../utils/commandFixerAgent";
 import "xterm/css/xterm.css";
 import "./Terminal.css";
 
 interface TerminalProps {
   addErrorMessage: (message: string) => void;
+  addSuggestions: (
+    originalCommand: string,
+    errorMessage: string,
+    suggestions: CommandSuggestion[]
+  ) => void;
+  runCommand?: (command: string) => void;
 }
 
-const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
+const Terminal: React.FC<TerminalProps> = ({
+  addErrorMessage,
+  addSuggestions,
+  runCommand,
+}) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstance = useRef<XTerm | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -19,6 +32,18 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
   const processingErrorRef = useRef<boolean>(false);
   const lastCommandRef = useRef<string>("");
   const currentCommandRef = useRef<string>("");
+
+  // Execute a command in the terminal
+  const executeCommand = useCallback((command: string) => {
+    if (socketRef.current && terminalInstance.current) {
+      // Write the command to terminal
+      terminalInstance.current.write(command);
+      // Send command to server
+      socketRef.current.emit("input", command);
+      // Also send an Enter key to execute
+      socketRef.current.emit("input", "\r");
+    }
+  }, []);
 
   // Memoize the error detection function to prevent re-creating it on each render
   const detectAndHandleError = useCallback(
@@ -47,6 +72,11 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
         /exception/i,
         /cannot/i,
         /could not/i,
+        /:/i,
+        / option/i,
+        / operand/i,
+        / token/i,
+        / .* but got/i,
       ];
 
       try {
@@ -75,25 +105,28 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
 
             // Use requestAnimationFrame to avoid blocking the UI
             requestAnimationFrame(async () => {
+              // Add the error message to the chat panel
               addErrorMessage(formattedError);
 
               // Try to suggest a fixed command if there's a last command
               if (lastCommandRef.current) {
                 try {
-                  // Get a suggested fix from the command fixer agent
-                  const suggestedFix = await commandFixerAgent(
+                  // Get suggested fixes from the command fixer agent
+                  const suggestions = await commandFixerAgent(
                     lastCommandRef.current,
                     errorMessage.trim()
                   );
 
-                  // Only suggest if the fix is different from the original command
-                  if (suggestedFix && suggestedFix !== lastCommandRef.current) {
-                    addErrorMessage(
-                      `Suggestion: Try this instead: ${suggestedFix}`
+                  // Add the suggestions to the chat panel
+                  if (suggestions && suggestions.length > 0) {
+                    addSuggestions(
+                      lastCommandRef.current,
+                      errorMessage.trim(),
+                      suggestions
                     );
                   }
                 } catch (err) {
-                  console.error("Error getting command suggestion:", err);
+                  console.error("Error getting command suggestions:", err);
                 }
               }
 
@@ -111,7 +144,7 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
         processingErrorRef.current = false;
       }
     },
-    [addErrorMessage]
+    [addErrorMessage, addSuggestions]
   );
 
   useEffect(() => {
@@ -231,7 +264,17 @@ const Terminal: React.FC<TerminalProps> = ({ addErrorMessage }) => {
         socketRef.current.disconnect();
       }
     };
-  }, [addErrorMessage, detectAndHandleError]);
+  }, [addErrorMessage, addSuggestions, detectAndHandleError]);
+
+  // Expose the ability to run commands from outside the terminal component
+  React.useEffect(() => {
+    if (runCommand) {
+      (window as any).runTerminalCommand = executeCommand;
+    }
+    return () => {
+      delete (window as any).runTerminalCommand;
+    };
+  }, [runCommand, executeCommand]);
 
   return <div ref={terminalRef} className="terminal-container" />;
 };

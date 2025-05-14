@@ -59,6 +59,76 @@
   line-height: 1.4;
 }
 
+/* Suggestion message styling */
+.suggestion-message {
+  background-color: #2a333c;
+  border-left: 3px solid #4c8dff;
+  align-self: flex-start;
+  width: 95%;
+}
+
+.suggestion-title {
+  font-weight: bold;
+  color: #4c8dff;
+  margin-bottom: 8px;
+}
+
+.suggestion-list {
+  padding-left: 20px;
+  margin: 0;
+}
+
+.suggestion-item {
+  margin-bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.suggestion-command {
+  font-family: monospace;
+  background-color: #333;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-weight: bold;
+  color: #ffcc66;
+  margin-right: 5px;
+}
+
+.suggestion-arrow {
+  color: #999;
+  margin: 0 5px;
+}
+
+.suggestion-desc {
+  color: #ccc;
+  flex: 1;
+  min-width: 180px;
+}
+
+.run-command-btn {
+  background-color: #2c6e49;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 8px;
+  margin-left: 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background-color 0.2s;
+}
+
+.run-command-btn:hover {
+  background-color: #3b8a5e;
+}
+
+.message-time-header {
+  font-size: 0.7rem;
+  color: #888;
+  margin: 5px 0;
+  text-align: center;
+}
+
 .chat-input-form {
   display: flex;
   padding: 10px;

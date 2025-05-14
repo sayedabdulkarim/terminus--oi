@@ -106,6 +106,7 @@ function App() {
         <div className="terminal-side">
           <Terminal
             addErrorMessage={addErrorMessage}
+            addMessage={addMessage}
             addSuggestions={addSuggestions}
             runCommand={runCommand}
           />

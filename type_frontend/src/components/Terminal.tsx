@@ -12,6 +12,7 @@ import "./Terminal.css";
 
 interface TerminalProps {
   addErrorMessage: (message: string) => void;
+  addMessage: (text: string, isError: boolean) => void;
   addSuggestions: (
     originalCommand: string,
     errorMessage: string,
@@ -22,6 +23,7 @@ interface TerminalProps {
 
 const Terminal: React.FC<TerminalProps> = ({
   addErrorMessage,
+  addMessage,
   addSuggestions,
   runCommand,
 }) => {
@@ -72,6 +74,11 @@ const Terminal: React.FC<TerminalProps> = ({
       // Don't process if we're already handling an error
       if (processingErrorRef.current) return;
 
+      console.log(
+        "Checking terminal output for errors:",
+        data.substring(0, 100) + "..."
+      );
+
       const errorPatterns = [
         /command not found/i,
         /permission denied/i,
@@ -79,7 +86,10 @@ const Terminal: React.FC<TerminalProps> = ({
         /cannot access/i,
         /error:/i,
         /failed:/i,
-        /bad option/i,
+        /bad option:/i, // Colon added to match "bad option: -ver" format
+        /bad option\s+-ver/i, // Specific pattern for "bad option -ver"
+        /bad option/i, // Add pattern without colon to catch variations
+        /\/.*node:.*bad option/i, // Pattern to catch "/path/to/node: bad option"
         /not a directory/i,
         /not recognized/i,
         /invalid/i,
@@ -93,11 +103,13 @@ const Terminal: React.FC<TerminalProps> = ({
         /exception/i,
         /cannot/i,
         /could not/i,
-        /:/i,
-        / option/i,
-        / operand/i,
-        / token/i,
-        / .* but got/i,
+        /unrecognized command/i,
+        /unknown command/i,
+        /illegal option/i,
+        /bad flag/i,
+        /bad flag syntax/i,
+        /unknown flag/i,
+        /unknown option/i,
       ];
 
       try {
@@ -107,6 +119,7 @@ const Terminal: React.FC<TerminalProps> = ({
         if (hasError) {
           // Set processing flag to prevent re-entrancy
           processingErrorRef.current = true;
+          console.log("Error detected in terminal output!");
 
           // Split by both \n and \r\n to handle different line endings
           const lines = data.split(/\r?\n/).filter((line) => line.trim());
@@ -117,6 +130,35 @@ const Terminal: React.FC<TerminalProps> = ({
           );
 
           if (errorMessage) {
+            console.log("Error message identified:", errorMessage);
+            console.log("Last command was:", lastCommandRef.current);
+
+            // Special handling for "node -ver" type errors - check both error message and last command
+            const isNodeVersionError =
+              (errorMessage.includes("bad option") &&
+                errorMessage.includes("-ver")) ||
+              errorMessage.match(/\/.*node:.*bad option/i) !== null;
+
+            // Force last command to be "node -ver" if error appears to be about node version flags
+            if (
+              isNodeVersionError &&
+              !lastCommandRef.current.includes("node")
+            ) {
+              console.log(
+                "🔄 Detected node version error but command doesn't match. Setting command to 'node -ver'"
+              );
+              lastCommandRef.current = "node -ver";
+            }
+
+            // Debug log to check if the specific "node -ver" case is being handled
+            if (
+              lastCommandRef.current.includes("node") &&
+              (errorMessage.includes("bad option") ||
+                errorMessage.includes("-ver"))
+            ) {
+              console.log("🚨 Detected node command with bad option error!");
+            }
+
             // Format error to include the last command
             const formattedError = lastCommandRef.current
               ? `Error after: ${
@@ -132,22 +174,92 @@ const Terminal: React.FC<TerminalProps> = ({
               // Try to suggest a fixed command if there's a last command
               if (lastCommandRef.current) {
                 try {
+                  console.log(
+                    "Requesting command suggestions for:",
+                    lastCommandRef.current
+                  );
+
+                  // Add a loading message in the chat panel
+                  addMessage("Getting command suggestions...", false);
+
                   // Get suggested fixes from the command fixer agent
                   const suggestions = await commandFixerAgent(
                     lastCommandRef.current,
                     errorMessage.trim()
                   );
 
+                  console.log(
+                    {
+                      lastCommandRef: lastCommandRef.current,
+                      errorMessage: errorMessage.trim(),
+                    },
+                    " hello"
+                  );
+                  console.log(
+                    "Command suggestions received: ====",
+                    suggestions
+                  );
+
                   // Add the suggestions to the chat panel
                   if (suggestions && suggestions.length > 0) {
+                    console.log(
+                      `Received ${suggestions.length} command suggestions`
+                    );
                     addSuggestions(
                       lastCommandRef.current,
                       errorMessage.trim(),
                       suggestions
                     );
+                  } else {
+                    console.warn(
+                      "No suggestions returned from commandFixerAgent"
+                    );
+                    // Add a fallback suggestion if none were returned
+                    addSuggestions(
+                      lastCommandRef.current,
+                      errorMessage.trim(),
+                      [
+                        {
+                          command: lastCommandRef.current.replace("-ver", "-v"),
+                          description: "Possible correction for invalid flag",
+                        },
+                      ]
+                    );
                   }
                 } catch (err) {
                   console.error("Error getting command suggestions:", err);
+                  // Even on error, try to provide some fallback suggestions
+                  const fallbackSuggestions = [];
+
+                  // Special case for common errors
+                  if (lastCommandRef.current.includes("-ver")) {
+                    fallbackSuggestions.push({
+                      command: lastCommandRef.current.replace("-ver", "-v"),
+                      description: "Use -v instead of -ver for version flag",
+                    });
+                  } else if (
+                    lastCommandRef.current.includes("node") &&
+                    errorMessage.includes("bad option")
+                  ) {
+                    // Handle other node-specific bad options
+                    fallbackSuggestions.push({
+                      command: "node -v",
+                      description: "Show Node.js version",
+                    });
+                    fallbackSuggestions.push({
+                      command: "node -h",
+                      description: "Show Node.js help",
+                    });
+                  }
+
+                  // Add fallback suggestions to the chat panel
+                  if (fallbackSuggestions.length > 0) {
+                    addSuggestions(
+                      lastCommandRef.current,
+                      errorMessage.trim(),
+                      fallbackSuggestions
+                    );
+                  }
                 }
               }
 
@@ -165,7 +277,7 @@ const Terminal: React.FC<TerminalProps> = ({
         processingErrorRef.current = false;
       }
     },
-    [addErrorMessage, addSuggestions]
+    [addErrorMessage, addMessage, addSuggestions]
   );
 
   useEffect(() => {
@@ -261,14 +373,42 @@ const Terminal: React.FC<TerminalProps> = ({
     if (terminalInstance.current) {
       terminalInstance.current.onData((data: string) => {
         if (socketRef.current) {
-          socketRef.current.emit("input", data);
-
-          // Track command as user types
+          socketRef.current.emit("input", data); // Track command as user types - improved tracking
           if (data === "\r") {
             // Enter key pressed - save the current command as the last command and reset
-            lastCommandRef.current = currentCommandRef.current;
+            const trimmedCommand = currentCommandRef.current.trim();
+            if (trimmedCommand) {
+              console.log("Command executed:", trimmedCommand);
+              lastCommandRef.current = trimmedCommand;
+
+              // Enhanced tracking for specific commands known to cause errors
+              if (
+                trimmedCommand.match(/node\s+-ver\b/) ||
+                trimmedCommand.match(/node\s+--ver\b/)
+              ) {
+                console.log(
+                  "⚠️ Detected potentially problematic command pattern: node -ver or --ver"
+                );
+                // Pre-emptively notify the user this may cause an error
+                addMessage(
+                  "Note: The command you entered might be using an incorrect version flag. Watching for errors...",
+                  false
+                );
+              }
+
+              // Other node commands that might cause errors
+              if (
+                trimmedCommand.match(/node\s+-[a-z]{3,}\b/) &&
+                !trimmedCommand.includes("--")
+              ) {
+                console.log(
+                  "⚠️ Detected potentially invalid node flag:",
+                  trimmedCommand
+                );
+              }
+            }
             currentCommandRef.current = "";
-          } else if (data === "\u007F") {
+          } else if (data === "\u007F" || data === "\b") {
             // Backspace key - remove last character
             currentCommandRef.current = currentCommandRef.current.slice(0, -1);
           } else if (data === "\u0003") {
@@ -278,6 +418,8 @@ const Terminal: React.FC<TerminalProps> = ({
             // Ignore escape sequences and other control characters
             // Only track printable characters
             currentCommandRef.current += data;
+            // Debug logging to see what's being captured
+            console.log("Current command buffer:", currentCommandRef.current);
           }
         }
       });
@@ -346,7 +488,7 @@ const Terminal: React.FC<TerminalProps> = ({
       // Clear addon references
       fitAddonRef.current = null;
     };
-  }, [addErrorMessage, addSuggestions, detectAndHandleError]);
+  }, [addErrorMessage, addSuggestions, detectAndHandleError, addMessage]);
 
   // Expose the ability to run commands from outside the terminal component
   React.useEffect(() => {

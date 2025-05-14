@@ -34,6 +34,9 @@ const Terminal: React.FC<TerminalProps> = ({
   const processingErrorRef = useRef<boolean>(false);
   const lastCommandRef = useRef<string>("");
   const currentCommandRef = useRef<string>("");
+  const lastErrorRef = useRef<string>(""); // Track the last error we processed
+  const commandHistoryRef = useRef<string[]>([]); // Track recent commands
+  const processedPairsRef = useRef<Set<string>>(new Set()); // Track command+error pairs we've already processed
 
   // Execute a command in the terminal
   const executeCommand = useCallback((command: string) => {
@@ -81,6 +84,7 @@ const Terminal: React.FC<TerminalProps> = ({
 
       const errorPatterns = [
         /command not found/i,
+        /command not found:\s\w+/i, // Added pattern for "command not found: cmd" format
         /permission denied/i,
         /no such file or directory/i,
         /cannot access/i,
@@ -90,13 +94,14 @@ const Terminal: React.FC<TerminalProps> = ({
         /bad option\s+-ver/i, // Specific pattern for "bad option -ver"
         /bad option/i, // Add pattern without colon to catch variations
         /\/.*node:.*bad option/i, // Pattern to catch "/path/to/node: bad option"
+        /unknown option/i, // Python often uses this for unknown options
+        /unrecognized option/i,
+        /invalid option/i,
         /not a directory/i,
         /not recognized/i,
         /invalid/i,
         /missing/i,
         /unexpected/i,
-        /unrecognized option/i,
-        /invalid option/i,
         /syntax error/i,
         /segmentation fault/i,
         /traceback/i,
@@ -110,6 +115,10 @@ const Terminal: React.FC<TerminalProps> = ({
         /bad flag syntax/i,
         /unknown flag/i,
         /unknown option/i,
+        /python:.*error/i, // Python specific error patterns
+        /ModuleNotFoundError/i,
+        /ImportError/i,
+        /AttributeError/i,
       ];
 
       try {
@@ -130,16 +139,86 @@ const Terminal: React.FC<TerminalProps> = ({
           );
 
           if (errorMessage) {
+            // Check if this is the same error we just processed
+            if (lastErrorRef.current === errorMessage) {
+              console.log("Skipping duplicate error:", errorMessage);
+              processingErrorRef.current = false;
+              return;
+            }
+
+            // Update our tracking of the last error we processed
+            lastErrorRef.current = errorMessage;
+
             console.log("Error message identified:", errorMessage);
             console.log("Last command was:", lastCommandRef.current);
 
-            // Special handling for "node -ver" type errors - check both error message and last command
+            // Specific error type detection logging
+            if (
+              errorMessage === "unknown option --v" ||
+              errorMessage.includes("unknown option --v")
+            ) {
+              console.log(
+                "🐍 Python version flag error detected specifically:",
+                errorMessage
+              );
+            }
+
+            // Special handling for various error types
+
+            // 0. Command not found errors - always use the exact command that caused the error
+            if (errorMessage.includes("command not found")) {
+              // First try the more specific shell error format (zsh: command not found: mk)
+              const shellErrorMatch = errorMessage.match(/\w+:\s+command not found:\s+(\w+)/i);
+              let commandName: string | undefined;
+              
+              if (shellErrorMatch && shellErrorMatch[1]) {
+                // This matches patterns like "zsh: command not found: mk"
+                commandName = shellErrorMatch[1].trim();
+                console.log("📍 Shell command not found:", commandName);
+              } else {
+                // Fall back to the original pattern for errors like "command: command not found"
+                const commandMatch = errorMessage.match(/([^\s:]+):\s+command not found/);
+                if (commandMatch && commandMatch[1]) {
+                  commandName = commandMatch[1].trim();
+                  console.log("📍 Basic command not found for:", commandName);
+                }
+              }
+              
+              if (commandName) {
+                // Check command history to see if this command was recently used
+                const recentCommand = commandHistoryRef.current.find(
+                  (cmd) => cmd === commandName || cmd.startsWith(commandName + " ")
+                );
+
+                if (recentCommand) {
+                  console.log("Found matching command in history:", recentCommand);
+                  lastCommandRef.current = recentCommand;
+                }
+                // If the last command doesn't match what the error says, update it
+                else if (
+                  !lastCommandRef.current.startsWith(commandName + " ") &&
+                  lastCommandRef.current !== commandName
+                ) {
+                  console.log(
+                    "Updating lastCommandRef to match the failed command:",
+                    commandName
+                  );
+                  lastCommandRef.current = commandName;
+                }
+
+                // For command not found errors, we want to ensure we get fresh suggestions
+                // each time, so completely reset all processed pairs
+                console.log("Command not found - completely resetting processed pairs");
+                processedPairsRef.current = new Set();
+              }
+            }
+
+            // 1. Node version errors
             const isNodeVersionError =
               (errorMessage.includes("bad option") &&
                 errorMessage.includes("-ver")) ||
               errorMessage.match(/\/.*node:.*bad option/i) !== null;
 
-            // Force last command to be "node -ver" if error appears to be about node version flags
             if (
               isNodeVersionError &&
               !lastCommandRef.current.includes("node")
@@ -150,13 +229,42 @@ const Terminal: React.FC<TerminalProps> = ({
               lastCommandRef.current = "node -ver";
             }
 
-            // Debug log to check if the specific "node -ver" case is being handled
+            // 2. Python errors
+            const isPythonError =
+              (errorMessage.includes("python") ||
+                errorMessage === "unknown option --v") &&
+              (errorMessage.includes("unknown option") ||
+                errorMessage.includes("invalid option"));
+
+            if (isPythonError && !lastCommandRef.current.includes("python")) {
+              console.log(
+                "🔄 Detected Python error but command doesn't match. Setting command appropriately"
+              );
+              // Check if it's likely a version check error
+              if (
+                errorMessage.includes("--v") ||
+                errorMessage.includes("-ver") ||
+                errorMessage === "unknown option --v"
+              ) {
+                lastCommandRef.current = "python --v";
+              }
+            }
+
+            // Debug log for specific error patterns
             if (
               lastCommandRef.current.includes("node") &&
               (errorMessage.includes("bad option") ||
                 errorMessage.includes("-ver"))
             ) {
               console.log("🚨 Detected node command with bad option error!");
+            }
+
+            if (
+              lastCommandRef.current.includes("python") &&
+              (errorMessage.includes("unknown option") ||
+                errorMessage.includes("invalid option"))
+            ) {
+              console.log("🚨 Detected Python command with option error!");
             }
 
             // Format error to include the last command
@@ -174,6 +282,37 @@ const Terminal: React.FC<TerminalProps> = ({
               // Try to suggest a fixed command if there's a last command
               if (lastCommandRef.current) {
                 try {
+                  // Check if we've already processed this exact command+error pair
+                  // Add timestamp to avoid permanent caching (reset after 30 seconds)
+                  const currentTime = Math.floor(Date.now() / 1000);
+                  const commandErrorPair = `${
+                    lastCommandRef.current
+                  }|||${errorMessage.trim()}|||${Math.floor(currentTime / 30)}`;
+
+                  if (processedPairsRef.current.has(commandErrorPair)) {
+                    console.log(
+                      "🔄 Skipping duplicate command+error pair:",
+                      commandErrorPair
+                    );
+                    processingErrorRef.current = false;
+                    return;
+                  }
+
+                  // Track that we're processing this command+error pair
+                  processedPairsRef.current.add(commandErrorPair);
+
+                  // Save the current command for history
+                  if (
+                    lastCommandRef.current &&
+                    !commandHistoryRef.current.includes(lastCommandRef.current)
+                  ) {
+                    commandHistoryRef.current.push(lastCommandRef.current);
+                    // Keep only the last 10 commands
+                    if (commandHistoryRef.current.length > 10) {
+                      commandHistoryRef.current.shift();
+                    }
+                  }
+
                   console.log(
                     "Requesting command suggestions for:",
                     lastCommandRef.current
@@ -188,17 +327,46 @@ const Terminal: React.FC<TerminalProps> = ({
                     errorMessage.trim()
                   );
 
-                  console.log(
-                    {
-                      lastCommandRef: lastCommandRef.current,
-                      errorMessage: errorMessage.trim(),
-                    },
-                    " hello"
-                  );
-                  console.log(
-                    "Command suggestions received: ====",
-                    suggestions
-                  );
+                  // Extra handling for Python --v errors
+                  if (
+                    errorMessage.trim() === "unknown option --v" &&
+                    !lastCommandRef.current.includes("python")
+                  ) {
+                    console.log(
+                      "🐍 Forcing Python command for unknown option --v error"
+                    );
+                    // Force this to be a Python version check issue
+                    const pythonSuggestions = await commandFixerAgent(
+                      "python --v", // Force the command to be Python specific
+                      errorMessage.trim()
+                    );
+
+                    if (pythonSuggestions && pythonSuggestions.length > 0) {
+                      console.log("Using Python-specific suggestions instead");
+                      return addSuggestions(
+                        "python --v",
+                        errorMessage.trim(),
+                        pythonSuggestions
+                      );
+                    }
+                  }
+
+                  console.log({
+                    lastCommandRef: lastCommandRef.current,
+                    errorMessage: errorMessage.trim(),
+                    suggestionsReceived: suggestions.length,
+                  });
+
+                  if (suggestions.length > 0) {
+                    console.log(
+                      "Command suggestions received: ====",
+                      suggestions
+                    );
+                  } else {
+                    console.warn(
+                      "⚠️ No suggestions were returned from the API"
+                    );
+                  }
 
                   // Add the suggestions to the chat panel
                   if (suggestions && suggestions.length > 0) {
@@ -266,6 +434,12 @@ const Terminal: React.FC<TerminalProps> = ({
               // Reset the processing flag after a small delay
               setTimeout(() => {
                 processingErrorRef.current = false;
+
+                // Also reset the current command ref to ensure we don't
+                // track commands incorrectly after errors
+                if (currentCommandRef.current === lastCommandRef.current) {
+                  currentCommandRef.current = "";
+                }
               }, 300);
             });
           } else {
@@ -379,7 +553,34 @@ const Terminal: React.FC<TerminalProps> = ({
             const trimmedCommand = currentCommandRef.current.trim();
             if (trimmedCommand) {
               console.log("Command executed:", trimmedCommand);
+
+              // Reset the processed pairs set when executing a new command that doesn't match the last command
+              // This ensures we generate new suggestions for the same error with different commands
+              if (lastCommandRef.current !== trimmedCommand) {
+                // Only reset the processed pairs related to the previous command
+                const newProcessedPairs = new Set<string>();
+                processedPairsRef.current.forEach((pair) => {
+                  if (!pair.startsWith(lastCommandRef.current + "|||")) {
+                    newProcessedPairs.add(pair);
+                  }
+                });
+                processedPairsRef.current = newProcessedPairs;
+
+                // When the command changes, clear the last error to ensure fresh processing
+                lastErrorRef.current = "";
+              }
+
+              // Update the last command reference with the current command
               lastCommandRef.current = trimmedCommand;
+              
+              // Also track this in command history
+              if (!commandHistoryRef.current.includes(trimmedCommand)) {
+                commandHistoryRef.current.push(trimmedCommand);
+                if (commandHistoryRef.current.length > 10) {
+                  commandHistoryRef.current.shift();
+                }
+                console.log("Updated command history:", commandHistoryRef.current);
+              }
 
               // Enhanced tracking for specific commands known to cause errors
               if (
@@ -392,6 +593,32 @@ const Terminal: React.FC<TerminalProps> = ({
                 // Pre-emptively notify the user this may cause an error
                 addMessage(
                   "Note: The command you entered might be using an incorrect version flag. Watching for errors...",
+                  false
+                );
+              }
+
+              // Python-specific command tracking
+              if (
+                trimmedCommand.match(/python\s+--v\b/) ||
+                trimmedCommand.match(/python3\s+--v\b/) ||
+                trimmedCommand.match(/python\s+-ver\b/) ||
+                trimmedCommand.match(/python3\s+-ver\b/)
+              ) {
+                console.log(
+                  "⚠️ Detected potentially problematic Python command:",
+                  trimmedCommand
+                );
+                // Store this explicitly as the last command to ensure it's tracked properly
+                lastCommandRef.current = trimmedCommand;
+                // Clear the processed pairs to ensure we get fresh suggestions
+                processedPairsRef.current.clear();
+                console.log(
+                  "Python command stored in lastCommandRef:",
+                  lastCommandRef.current
+                );
+
+                addMessage(
+                  "Note: Python uses -V (capital V) or --version for checking version. Watching for errors...",
                   false
                 );
               }

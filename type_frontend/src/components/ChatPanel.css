@@ -73,7 +73,25 @@
   margin-bottom: 12px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   font-size: 1rem;
+}
+
+.refresh-suggestions-btn {
+  background-color: #2a2a2a;
+  border: 1px solid #444;
+  color: #f0f0f0;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 10px;
+}
+
+.refresh-suggestions-btn:hover {
+  background-color: #3a3a3a;
+  border-color: #666;
 }
 
 /* Pill-based suggestion styling */

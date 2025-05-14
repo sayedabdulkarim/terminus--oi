@@ -65,7 +65,44 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
               {message.isSuggestion ? (
                 <div className="message suggestion-message">
                   <div className="message-text">
-                    <div className="suggestion-title">💡 Suggestions:</div>
+                    <div className="suggestion-title">
+                      💡 Suggestions:
+                      {message.suggestions &&
+                        message.suggestions.length > 0 && (
+                          <button
+                            className="refresh-suggestions-btn"
+                            onClick={() => {
+                              // Force refresh all suggestions by clearing cache
+                              console.log(
+                                "Force refresh suggestions requested"
+                              );
+                              addMessage("🔄 Refreshing suggestions...", false);
+                              // Run the command again to trigger new suggestions
+                              if (
+                                runCommand &&
+                                message.suggestions &&
+                                message.suggestions[0]
+                              ) {
+                                // Get original command by extracting from the message
+                                const originalCmd = message.text.includes(
+                                  "Error after:"
+                                )
+                                  ? message.text
+                                      .split("Error after:")[1]
+                                      ?.split("\n")[0]
+                                      ?.trim()
+                                  : message.suggestions[0].command;
+
+                                if (originalCmd) {
+                                  runCommand(originalCmd);
+                                }
+                              }
+                            }}
+                          >
+                            🔄 Refresh
+                          </button>
+                        )}
+                    </div>
                     <div className="suggestion-pills">
                       {message.suggestions?.map((suggestion, index) => (
                         <div

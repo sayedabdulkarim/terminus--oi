@@ -66,29 +66,21 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                 <div className="message suggestion-message">
                   <div className="message-text">
                     <div className="suggestion-title">💡 Suggestions:</div>
-                    <ol className="suggestion-list">
+                    <div className="suggestion-pills">
                       {message.suggestions?.map((suggestion, index) => (
-                        <li key={index} className="suggestion-item">
-                          <span className="suggestion-command">
+                        <div
+                          key={index}
+                          className="suggestion-pill"
+                          title={suggestion.description}
+                          onClick={() => handleRunCommand(suggestion.command)}
+                        >
+                          <span className="pill-command">
                             {suggestion.command}
                           </span>
-                          <span className="suggestion-arrow">→</span>
-                          <span className="suggestion-desc">
-                            {suggestion.description}
-                          </span>
-                          {runCommand && (
-                            <button
-                              className="run-command-btn"
-                              onClick={() =>
-                                handleRunCommand(suggestion.command)
-                              }
-                            >
-                              Run
-                            </button>
-                          )}
-                        </li>
+                          <span className="pill-run-icon">▶</span>
+                        </div>
                       ))}
-                    </ol>
+                    </div>
                   </div>
                 </div>
               ) : (

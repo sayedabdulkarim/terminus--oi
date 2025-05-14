@@ -70,12 +70,72 @@
 .suggestion-title {
   font-weight: bold;
   color: #4c8dff;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  font-size: 1rem;
+}
+
+/* Pill-based suggestion styling */
+.suggestion-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
+.suggestion-pill {
+  display: flex;
+  align-items: center;
+  background-color: #333;
+  border: 1px solid #4c8dff;
+  border-radius: 20px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.suggestion-pill:hover {
+  background-color: #3a3a3a;
+  box-shadow: 0 2px 5px rgba(76, 141, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.suggestion-pill:active {
+  transform: translateY(0px);
+  box-shadow: 0 1px 2px rgba(76, 141, 255, 0.2);
+}
+
+.pill-command {
+  font-family: monospace;
+  font-weight: bold;
+  color: #ffcc66;
+  margin-right: 8px;
+}
+
+.pill-run-icon {
+  font-size: 10px;
+  color: #4c8dff;
+  opacity: 0.8;
+  margin-left: 2px;
+  transition: all 0.2s ease;
+}
+
+.suggestion-pill:hover .pill-run-icon {
+  opacity: 1;
+  color: #6ee7b7;
+}
+
+/* Tooltip styles will be handled by the title attribute */
+
+/* Legacy suggestion styles kept for reference */
 .suggestion-list {
   padding-left: 20px;
   margin: 0;
+  display: none; /* Hide the old suggestion list */
 }
 
 .suggestion-item {

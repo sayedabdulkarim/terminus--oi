@@ -4,6 +4,7 @@ const { Server } = require("socket.io");
 const pty = require("node-pty");
 const os = require("os");
 const cors = require("cors");
+const axios = require("axios"); // Make sure axios is installed
 
 const app = express();
 app.use(
@@ -13,6 +14,47 @@ app.use(
     credentials: true,
   })
 );
+app.use(express.json()); // Parse JSON request bodies
+
+// Proxy endpoint for OpenRouter API
+app.post("/api/proxy/openrouter", async (req, res) => {
+  try {
+    const { prompt, apiKey, model } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: "API key is required" });
+    }
+
+    const response = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        model: model || "anthropic/claude-3.5-sonnet",
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        max_tokens: 150,
+        temperature: 0.2,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("Proxy error:", error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.message,
+      details: error.response?.data || "Unknown error",
+    });
+  }
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {

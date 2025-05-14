@@ -338,110 +338,209 @@ const Terminal: React.FC<TerminalProps> = ({
                   addMessage("Getting command suggestions...", false);
 
                   // Get suggested fixes from the command fixer agent
-                  const suggestions = await commandFixerAgent(
-                    lastCommandRef.current,
-                    errorMessage.trim()
-                  );
-
-                  // Extra handling for Python --v errors
-                  if (
-                    errorMessage.trim() === "unknown option --v" &&
-                    !lastCommandRef.current.includes("python")
-                  ) {
+                  try {
                     console.log(
-                      "🐍 Forcing Python command for unknown option --v error"
-                    );
-                    // Force this to be a Python version check issue
-                    const pythonSuggestions = await commandFixerAgent(
-                      "python --v", // Force the command to be Python specific
-                      errorMessage.trim()
+                      "Requesting command suggestions for:",
+                      lastCommandRef.current
                     );
 
-                    if (pythonSuggestions && pythonSuggestions.length > 0) {
-                      console.log("Using Python-specific suggestions instead");
-                      return addSuggestions(
-                        "python --v",
+                    // Add a loading message in the chat panel
+                    addMessage("Getting command suggestions...", false);
+
+                    let suggestions = [];
+                    try {
+                      // Try with the original command first
+                      suggestions = await commandFixerAgent(
+                        lastCommandRef.current,
+                        errorMessage.trim()
+                      );
+                    } catch (apiError) {
+                      console.warn("Initial API call failed:", apiError);
+                      addMessage("Retrying with simplified command...", false);
+
+                      // If the original command fails, try with a simplified version
+                      // This is useful for complex commands with multiple arguments
+                      const simplifiedCommand =
+                        lastCommandRef.current.split(" ")[0];
+                      if (
+                        simplifiedCommand &&
+                        simplifiedCommand !== lastCommandRef.current
+                      ) {
+                        try {
+                          suggestions = await commandFixerAgent(
+                            simplifiedCommand,
+                            errorMessage.trim()
+                          );
+                        } catch (retryError) {
+                          console.error(
+                            "Retry API call also failed:",
+                            retryError
+                          );
+                          throw retryError; // Re-throw to be handled by outer catch
+                        }
+                      } else {
+                        throw apiError; // Re-throw the original error
+                      }
+                    }
+
+                    // Extra handling for Python --v errors
+                    if (
+                      errorMessage.trim() === "unknown option --v" &&
+                      !lastCommandRef.current.includes("python") &&
+                      suggestions.length === 0
+                    ) {
+                      console.log(
+                        "🐍 Python error detected but no suggestions found. Trying explicit python command."
+                      );
+                      try {
+                        // Force this to be a Python version check issue
+                        suggestions = await commandFixerAgent(
+                          "python --v", // Force the command to be Python specific
+                          errorMessage.trim()
+                        );
+                      } catch (pythonError) {
+                        console.error(
+                          "Python-specific API call failed:",
+                          pythonError
+                        );
+                        // Continue with whatever suggestions we have
+                      }
+                    }
+
+                    console.log({
+                      lastCommandRef: lastCommandRef.current,
+                      errorMessage: errorMessage.trim(),
+                      suggestionsReceived: suggestions.length,
+                    });
+
+                    if (suggestions.length > 0) {
+                      console.log(
+                        "Command suggestions received: ====",
+                        suggestions
+                      );
+                      addSuggestions(
+                        lastCommandRef.current,
                         errorMessage.trim(),
-                        pythonSuggestions
+                        suggestions
+                      );
+                    } else {
+                      // If we couldn't get any suggestions, inform the user
+                      addMessage(
+                        "Couldn't generate specific suggestions for this error. Try a different command.",
+                        true
                       );
                     }
-                  }
+                  } catch (error: unknown) {
+                    console.error("Error getting command suggestions:", error);
 
-                  console.log({
-                    lastCommandRef: lastCommandRef.current,
-                    errorMessage: errorMessage.trim(),
-                    suggestionsReceived: suggestions.length,
-                  });
+                    // Safely extract error message if it exists
+                    const errorMessage =
+                      error instanceof Error
+                        ? error.message
+                        : typeof error === "string"
+                        ? error
+                        : "Unknown error";
 
-                  if (suggestions.length > 0) {
-                    console.log(
-                      "Command suggestions received: ====",
-                      suggestions
-                    );
-                  } else {
-                    console.warn(
-                      "⚠️ No suggestions were returned from the API"
-                    );
-                  }
+                    // Provide helpful feedback based on the type of error
+                    if (errorMessage.includes("API key")) {
+                      addMessage(
+                        "Command suggestions unavailable: API key not configured.",
+                        true
+                      );
+                      addMessage(
+                        "Please contact the administrator to set up the API key.",
+                        false
+                      );
+                    } else if (errorMessage.includes("timeout")) {
+                      addMessage(
+                        "Command suggestions timed out. The API server might be busy.",
+                        true
+                      );
+                      addMessage("Try again in a moment.", false);
+                    } else {
+                      // Generic error message with an attempt to simplify the command
+                      const baseCommand = lastCommandRef.current.split(" ")[0];
+                      const simplifiedSuggestions = [];
 
-                  // Add the suggestions to the chat panel
-                  if (suggestions && suggestions.length > 0) {
-                    console.log(
-                      `Received ${suggestions.length} command suggestions`
-                    );
-                    addSuggestions(
-                      lastCommandRef.current,
-                      errorMessage.trim(),
-                      suggestions
-                    );
-                  } else {
-                    console.warn(
-                      "No suggestions returned from commandFixerAgent"
-                    );
-                    // Add a fallback suggestion if none were returned
-                    addSuggestions(
-                      lastCommandRef.current,
-                      errorMessage.trim(),
-                      [
-                        {
-                          command: lastCommandRef.current.replace("-ver", "-v"),
-                          description: "Possible correction for invalid flag",
-                        },
-                      ]
-                    );
+                      if (baseCommand) {
+                        if (
+                          errorMessage.includes("bad option") ||
+                          errorMessage.includes("unknown option")
+                        ) {
+                          simplifiedSuggestions.push({
+                            command: `${baseCommand} --help`,
+                            description: "Show help for this command",
+                          });
+                        }
+
+                        if (errorMessage.includes("command not found")) {
+                          simplifiedSuggestions.push({
+                            command: `which ${baseCommand}`,
+                            description: "Check if this command is installed",
+                          });
+                          simplifiedSuggestions.push({
+                            command: `echo $PATH`,
+                            description: "Check your PATH environment variable",
+                          });
+                        }
+                      }
+
+                      if (simplifiedSuggestions.length > 0) {
+                        addMessage(
+                          "API call failed, but here are some general suggestions:",
+                          true
+                        );
+                        addSuggestions(
+                          lastCommandRef.current,
+                          errorMessage.trim(),
+                          simplifiedSuggestions
+                        );
+                      } else {
+                        addMessage(
+                          "Couldn't generate suggestions. The command suggestion service is unavailable.",
+                          true
+                        );
+                        addMessage(
+                          "Please try again later or modify your command.",
+                          false
+                        );
+                      }
+                    }
                   }
                 } catch (err) {
                   console.error("Error getting command suggestions:", err);
                   // Even on error, try to provide some fallback suggestions
-                  const fallbackSuggestions = [];
+                  // but don't force any hardcoded suggestions
+                  addMessage(
+                    "Error getting command suggestions. The API might be unavailable.",
+                    true
+                  );
 
-                  // Special case for common errors
-                  if (lastCommandRef.current.includes("-ver")) {
-                    fallbackSuggestions.push({
-                      command: lastCommandRef.current.replace("-ver", "-v"),
-                      description: "Use -v instead of -ver for version flag",
-                    });
-                  } else if (
-                    lastCommandRef.current.includes("node") &&
-                    errorMessage.includes("bad option")
-                  ) {
-                    // Handle other node-specific bad options
-                    fallbackSuggestions.push({
-                      command: "node -v",
-                      description: "Show Node.js version",
-                    });
-                    fallbackSuggestions.push({
-                      command: "node -h",
-                      description: "Show Node.js help",
-                    });
+                  // Provide minimal guidance based on the command pattern
+                  const fallbackGuidance = [];
+
+                  if (lastCommandRef.current) {
+                    const cmdParts = lastCommandRef.current.split(" ");
+                    const baseCmd = cmdParts[0];
+
+                    if (baseCmd) {
+                      fallbackGuidance.push({
+                        command: `man ${baseCmd}`,
+                        description: "Check the manual for this command",
+                      });
+
+                      fallbackGuidance.push({
+                        command: `${baseCmd} --help`,
+                        description: "Show help for this command",
+                      });
+                    }
                   }
 
-                  // Add fallback suggestions to the chat panel
-                  if (fallbackSuggestions.length > 0) {
+                  if (fallbackGuidance.length > 0) {
                     addSuggestions(
                       lastCommandRef.current,
                       errorMessage.trim(),
-                      fallbackSuggestions
+                      fallbackGuidance
                     );
                   }
                 }

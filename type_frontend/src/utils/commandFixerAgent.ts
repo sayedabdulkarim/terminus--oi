@@ -6,124 +6,25 @@ export interface CommandSuggestion {
 }
 
 /**
- * Generate suggestions for command not found errors
+ * A utility to help identify common command patterns
+ * This is used to provide better context to the API
  */
-function generateCommandNotFoundSuggestions(
-  commandName: string
-): CommandSuggestion[] {
-  // First check for common typos in command names
-  const commonCommands: Record<string, string[]> = {
-    // Format: 'typo': ['correct1', 'correct2']
-    pyhton: ["python", "python3"],
-    pythno: ["python", "python3"],
-    ptyhon: ["python", "python3"],
-    noed: ["node", "nodejs"],
-    nodej: ["node", "nodejs"],
-    npn: ["npm"],
-    mpm: ["npm"],
-    gi: ["git"],
-    gt: ["git"],
-    gti: ["git"],
-    gitt: ["git"],
-    igt: ["git"],
-    kbuectl: ["kubectl"],
-    kubctl: ["kubectl"],
-    kubetcl: ["kubectl"],
-    kuectl: ["kubectl"],
-    kubernets: ["kubernetes"],
-    doker: ["docker"],
-    dockr: ["docker"],
-    dokcer: ["docker"],
-    lls: ["ls"],
-    sl: ["ls"],
-    "cd..": ["cd .."],
-    "cd~": ["cd ~"],
-    ccd: ["cd"],
-    nano: ["vim", "emacs", "nano"],
-    vim: ["nano", "vim", "emacs"],
-    "code.": ["code ."],
-    mk: ["mkdir"],
-    mkdi: ["mkdir"],
-    mkd: ["mkdir"],
-    md: ["mkdir"],
-  };
-
-  const suggestions: CommandSuggestion[] = [];
-
-  // Check if the command name is a known typo
-  if (commonCommands[commandName]) {
-    for (const correctCmd of commonCommands[commandName]) {
-      suggestions.push({
-        command: correctCmd,
-        description: `Try '${correctCmd}' instead of '${commandName}'`,
-      });
-    }
-  }
-
-  // Add some general suggestions based on the command
+function identifyCommandPattern(commandName: string): string {
+  // Check for common command name patterns to help the API
   if (commandName.includes("py")) {
-    suggestions.push(
-      {
-        command: "python --version",
-        description: "Check if Python is installed",
-      },
-      {
-        command: "python3 --version",
-        description: "Check if Python 3 is installed",
-      },
-      { command: "which python", description: "Find Python installation path" }
-    );
+    return "python";
   } else if (commandName.includes("node") || commandName.includes("npm")) {
-    suggestions.push(
-      { command: "node -v", description: "Check if Node.js is installed" },
-      { command: "npm -v", description: "Check if npm is installed" },
-      { command: "which node", description: "Find Node.js installation path" }
-    );
+    return "node";
   } else if (commandName.includes("kube") || commandName.includes("k8s")) {
-    suggestions.push(
-      {
-        command: "kubectl version",
-        description: "Check if kubectl is installed",
-      },
-      {
-        command: "which kubectl",
-        description: "Find kubectl installation path",
-      }
-    );
+    return "kubernetes";
   } else if (
     commandName === "mk" ||
     commandName === "mkdi" ||
     commandName === "mkd"
   ) {
-    // Add suggestions for the specific "mk" or "mkdi" commands
-    suggestions.push(
-      { command: "mkdir", description: "Create directory (correct command)" },
-      { command: "mkdir -p", description: "Create directory with parents" },
-      { command: "touch", description: "Create a file instead of a directory" }
-    );
-  } else {
-    // Generic suggestions for unknown commands
-    suggestions.push(
-      {
-        command: `which ${commandName}`,
-        description: `Check if ${commandName} is installed`,
-      },
-      {
-        command: "echo $PATH",
-        description: "Check your PATH environment variable",
-      },
-      {
-        command: `apt-get install ${commandName}`,
-        description: `Try installing ${commandName} (Debian/Ubuntu)`,
-      },
-      {
-        command: `brew install ${commandName}`,
-        description: `Try installing ${commandName} (macOS with Homebrew)`,
-      }
-    );
+    return "mkdir";
   }
-
-  return suggestions;
+  return commandName;
 }
 
 /**
@@ -155,148 +56,119 @@ export async function commandFixerAgent(
       /\w+:\s+command not found:\s+(\w+)/i
     );
 
+    let actualCommand = userCommand;
+
     if (shellErrorMatch && shellErrorMatch[1]) {
       // This matches patterns like "zsh: command not found: mk" where "mk" is the actual command
-      const actualCommand = shellErrorMatch[1].trim();
+      actualCommand = shellErrorMatch[1].trim();
       console.log(
         "📍 Extracted actual command from shell error:",
         actualCommand
       );
 
-      // Use the extracted command for suggestions
-      const suggestions = generateCommandNotFoundSuggestions(actualCommand);
-
-      // Add a bit of randomness to ensure UI updates
-      if (suggestions.length > 1) {
-        const randomIndex = Math.floor(Math.random() * suggestions.length);
-        const temp = suggestions[0];
-        suggestions[0] = suggestions[randomIndex];
-        suggestions[randomIndex] = temp;
-      }
-
-      return suggestions;
-    }
-
-    // Fall back to the original pattern
-    const commandNameMatch = errorMessage.match(
-      /([^\s:]+):\s+command not found/
-    );
-    if (commandNameMatch && commandNameMatch[1]) {
-      const commandName = commandNameMatch[1].trim();
-      // If the user command contains this same command name, provide command not found suggestions
-      if (
-        userCommand === commandName ||
-        userCommand.startsWith(commandName + " ")
-      ) {
+      // Identify the command pattern to help improve API response
+      const commandPattern = identifyCommandPattern(actualCommand);
+      if (commandPattern !== actualCommand) {
         console.log(
-          "📍 Providing command not found suggestions for:",
-          commandName
+          `Identified common pattern: '${actualCommand}' might be related to '${commandPattern}'`
         );
+      }
 
-        // For command not found errors, we want to be more dynamic with suggestions
-        // rather than relying on cached responses, so generate fresh suggestions
-        // with a slight randomization in the ordering
-        const suggestions = generateCommandNotFoundSuggestions(commandName);
+      // Update the userCommand to use the actual command that failed
+      if (userCommand !== actualCommand) {
+        console.log(
+          "Updating user command to use the actual command:",
+          actualCommand
+        );
+        userCommand = actualCommand;
+      }
+    } else {
+      // Fall back to the original pattern
+      const commandNameMatch = errorMessage.match(
+        /([^\s:]+):\s+command not found/
+      );
+      if (commandNameMatch && commandNameMatch[1]) {
+        const commandName = commandNameMatch[1].trim();
+        // If the user command contains this same command name, update the user command
+        if (
+          userCommand === commandName ||
+          userCommand.startsWith(commandName + " ")
+        ) {
+          console.log("📍 Identified command not found for:", commandName);
+          actualCommand = commandName;
 
-        // Add a bit of randomness to the order to ensure UI updates even with same suggestions
-        if (suggestions.length > 1) {
-          const randomIndex = Math.floor(Math.random() * suggestions.length);
-          const temp = suggestions[0];
-          suggestions[0] = suggestions[randomIndex];
-          suggestions[randomIndex] = temp;
+          // Identify the command pattern to help improve API response
+          const commandPattern = identifyCommandPattern(actualCommand);
+          if (commandPattern !== actualCommand) {
+            console.log(
+              `Identified common pattern: '${actualCommand}' might be related to '${commandPattern}'`
+            );
+          }
+
+          // If userCommand is different, update it
+          if (userCommand !== actualCommand) {
+            userCommand = actualCommand;
+          }
         }
-
-        return suggestions;
       }
     }
+
+    // For command not found errors, we'll continue to the API call below
+    // DO NOT return early here
   }
 
-  // Special case handling for "lsas" which was mentioned as a problem case
+  // Special handling for "lsas" command - now we'll use the API instead
   if (
     userCommand === "lsas" ||
     (errorMessage.includes("lsas") &&
       errorMessage.includes("command not found"))
   ) {
-    console.log("🔍 Special handling for 'lsas' command");
-    return [
-      { command: "ls -a", description: "List all files including hidden ones" },
-      { command: "ls -la", description: "List all files in long format" },
-      {
-        command: "ls -las",
-        description: "List all files with size information",
-      },
-      {
-        command:
-          "find . -type f | grep -i " + userCommand.replace(/[^a-z0-9]/gi, ""),
-        description: "Search for files containing similar name",
-      },
-    ];
+    console.log("🔍 'lsas' command detected - continuing to API call");
+    // Fallthrough to API call instead of returning static suggestions
   }
 
-  // Special override for node version errors which are very common
+  // Special handling for node version errors - now using API
   if (
     (errorMessage.includes("node") && errorMessage.includes("bad option")) ||
     errorMessage.match(/\/.*node:.*bad option/i) !== null
   ) {
-    console.log("🔔 Direct override for node version error");
-    return [
-      {
-        command: "node -v",
-        description: "Show Node.js version (correct flag)",
-      },
-      {
-        command: "node --version",
-        description: "Show Node.js version (long form)",
-      },
-      { command: "npm -v", description: "Show npm version" },
-      { command: "node -h", description: "Show Node.js help" },
-    ];
+    console.log("🔔 Node version error detected - using API for suggestions");
+    // Continue to API call with the current command
   }
 
-  // Special override for Python version flag errors
+  // Special handling for Python version flag errors - now using API
   if (
     errorMessage === "unknown option --v" ||
     errorMessage.includes("unknown option --v")
   ) {
-    console.log("🔔 Direct override for Python version error with --v");
+    console.log(
+      "🔔 Python version error with --v detected - using API for suggestions"
+    );
 
     // If the command doesn't include python but the error is python-specific,
-    // force it to be a python command
-    const finalCommand = userCommand.includes("python")
-      ? userCommand
-      : "python --v";
+    // update the command to include python
+    if (!userCommand.includes("python")) {
+      console.log(
+        `Python error detected but command doesn't include 'python'. Updating command.`
+      );
+      userCommand = "python --v";
+    }
 
-    console.log(`Python error detected. Using command: ${finalCommand}`);
-
-    return [
-      {
-        command: "python --version",
-        description: "Show Python version (full flag)",
-      },
-      {
-        command: "python -V",
-        description: "Show Python version (short flag, capital V)",
-      },
-      { command: "python3 --version", description: "Show Python3 version" },
-      { command: "which python", description: "Show Python installation path" },
-    ];
+    // Continue to API call with the updated command
   }
 
   if (!userCommand || userCommand.trim() === "") {
     console.error("Empty command passed to commandFixerAgent");
-    return [
-      {
-        command: "echo 'No command to fix'",
-        description: "No valid command was detected",
-      },
-    ];
+    throw new Error("Empty command passed to commandFixerAgent");
   }
 
   if (!apiKey) {
     console.error(
       "OpenRouter API key not found. Set REACT_APP_OPENROUTER_API_KEY in your environment or .env file."
     );
-    return [{ command: userCommand, description: "No API key available" }];
+    throw new Error(
+      "API key not found. Please configure the API key in your environment."
+    );
   }
 
   const prompt = `You are an AI assistant that helps users correct invalid shell commands.
@@ -304,6 +176,11 @@ Given the user's original command and the shell error message, suggest valid alt
 
 User command: ${userCommand}
 Error message: ${errorMessage}
+${
+  userCommand !== identifyCommandPattern(userCommand)
+    ? `Possible related command: ${identifyCommandPattern(userCommand)}`
+    : ""
+}
 
 Respond with multiple corrected shell command suggestions, each followed by a short description. Use this format exactly:
 1. <command> → <description>
@@ -316,31 +193,19 @@ Do not add any explanation or markdown.`;
   console.log("🔤 Formatted prompt:", prompt);
 
   try {
-    console.log("Making API call to OpenRouter...");
+    console.log("Making API call to OpenRouter via backend proxy...");
 
-    // Add a cache-busting timestamp to prevent any HTTP-level caching
-    const cacheBuster = Date.now();
-
+    // Use our backend proxy to avoid CORS issues
     const response = await axios.post(
-      `https://openrouter.ai/api/v1/chat/completions?_=${cacheBuster}`,
+      "http://localhost:3001/api/proxy/openrouter",
       {
+        prompt: prompt,
+        apiKey: apiKey,
         model: "anthropic/claude-3.5-sonnet",
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        max_tokens: 150,
-        temperature: 0.2, // Use a low temperature for more deterministic outputs
       },
       {
         headers: {
-          Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
-          "Cache-Control": "no-cache, no-store",
-          Pragma: "no-cache",
-          "If-None-Match": `${cacheBuster}`, // Prevent 304 responses
         },
         timeout: 10000, // 10-second timeout to prevent hanging
       }
@@ -351,7 +216,7 @@ Do not add any explanation or markdown.`;
 
     if (!response.data || !response.data.choices || !response.data.choices[0]) {
       console.error("Invalid API response format:", response.data);
-      return defaultSuggestions(userCommand, errorMessage);
+      throw new Error("Invalid API response format");
     }
 
     const suggestionsText = response.data.choices[0].message.content.trim();
@@ -361,12 +226,22 @@ Do not add any explanation or markdown.`;
     const suggestions = parseSuggestions(suggestionsText);
     console.log("Parsed suggestions:", suggestions);
 
-    return suggestions.length > 0
-      ? suggestions
-      : defaultSuggestions(userCommand, errorMessage);
-  } catch (error) {
+    if (suggestions.length === 0) {
+      console.warn("No suggestions could be parsed from API response");
+      // Return an empty array instead of falling back to default suggestions
+      return [
+        {
+          command: "echo 'Unable to parse suggestions'",
+          description: "Try a different command or check API response format",
+        },
+      ];
+    }
+
+    return suggestions;
+  } catch (error: unknown) {
     console.error("Error calling OpenRouter API:", error);
-    return defaultSuggestions(userCommand, errorMessage);
+    // Instead of returning default suggestions, throw the error to be handled by the caller
+    throw error;
   }
 }
 
@@ -488,143 +363,4 @@ function parseSuggestions(text: string): CommandSuggestion[] {
   return suggestions;
 }
 
-/**
- * Provides default suggestions based on common error patterns
- */
-function defaultSuggestions(
-  userCommand: string,
-  errorMessage: string
-): CommandSuggestion[] {
-  console.log("Generating default suggestions for command:", userCommand);
-  console.log("Error message:", errorMessage);
-
-  // Extract actual command for shell error messages
-  let actualCommand = userCommand;
-  const shellErrorMatch = errorMessage.match(
-    /\w+:\s+command not found:\s+(\w+)/i
-  );
-  if (shellErrorMatch && shellErrorMatch[1]) {
-    actualCommand = shellErrorMatch[1].trim();
-    console.log(
-      "Extracted actual command from error message for default suggestions:",
-      actualCommand
-    );
-  }
-
-  // Handle "bad option" errors for node commands
-  if (
-    userCommand.includes("node -ver") ||
-    userCommand.includes("node --ver") ||
-    (errorMessage.includes("bad option") &&
-      (errorMessage.includes("-ver") || errorMessage.includes("node"))) ||
-    errorMessage.match(/\/.*node:.*bad option/i) !== null
-  ) {
-    console.log(
-      "🔍 Matched node version flag error pattern - providing direct suggestions"
-    );
-    return [
-      {
-        command: "node -v",
-        description: "Show Node.js version (correct flag)",
-      },
-      {
-        command: "node --version",
-        description: "Show Node.js version (long form)",
-      },
-      { command: "npm -v", description: "Show npm version" },
-      { command: "node -h", description: "Show Node.js help" },
-    ];
-  }
-
-  // Handle Python command errors
-  if (
-    (userCommand.includes("python") ||
-      userCommand.includes("python3") ||
-      errorMessage.includes("unknown option --v")) &&
-    (errorMessage.includes("unknown option") ||
-      errorMessage.includes("invalid option") ||
-      errorMessage.includes("--v") ||
-      errorMessage.includes("-ver"))
-  ) {
-    console.log(
-      "🐍 Matched Python command error - providing Python-specific suggestions"
-    );
-    return [
-      {
-        command: "python --version",
-        description: "Show Python version (full flag)",
-      },
-      { command: "python -V", description: "Show Python version (short flag)" },
-      {
-        command: "python3 --version",
-        description: "Show Python3 version (full flag)",
-      },
-      {
-        command: "python3 -V",
-        description: "Show Python3 version (short flag)",
-      },
-      { command: "which python", description: "Show Python installation path" },
-    ];
-  }
-
-  // Handle common Git errors
-  if (
-    userCommand.includes("git") &&
-    (errorMessage.includes("not a git repository") ||
-      errorMessage.includes("fatal:") ||
-      errorMessage.includes("unknown option"))
-  ) {
-    const suggestions = [];
-
-    if (userCommand.includes("git pull")) {
-      suggestions.push(
-        { command: "git fetch", description: "Fetch updates without merging" },
-        {
-          command: "git pull --rebase",
-          description: "Pull with rebase instead of merge",
-        }
-      );
-    } else if (userCommand.includes("git push")) {
-      suggestions.push(
-        {
-          command: "git push -u origin HEAD",
-          description: "Push current branch setting upstream",
-        },
-        {
-          command: "git push --force-with-lease",
-          description: "Force push safely",
-        }
-      );
-    } else if (userCommand.includes("git status")) {
-      suggestions.push(
-        { command: "git init", description: "Initialize a git repository" },
-        { command: "git status -s", description: "Show status in short format" }
-      );
-    }
-
-    if (suggestions.length > 0) {
-      return suggestions;
-    }
-  }
-
-  // Handle specific command typos
-  if (
-    actualCommand === "mk" ||
-    actualCommand === "mkdi" ||
-    actualCommand === "mkd"
-  ) {
-    return [
-      { command: "mkdir", description: "Create directory (correct command)" },
-      { command: "mkdir -p", description: "Create directory with parents" },
-      { command: "touch", description: "Create a file instead of a directory" },
-    ];
-  }
-
-  // Default suggestion is to return the original command with a note
-  return [
-    {
-      command: actualCommand === userCommand ? userCommand : actualCommand,
-      description: "No specific suggestions available",
-    },
-  ];
-}
+// The defaultSuggestions function has been removed as we now use the API for all suggestions

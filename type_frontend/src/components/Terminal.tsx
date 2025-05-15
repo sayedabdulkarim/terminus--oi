@@ -350,8 +350,10 @@ const Terminal: React.FC<TerminalProps> = ({
                     let suggestions = [];
                     try {
                       // Try with the original command first
+                      // Assume non-zero exit code (1) when we detect an error
                       suggestions = await commandFixerAgent(
                         lastCommandRef.current,
+                        1, // Non-zero exit code indicates error
                         errorMessage.trim()
                       );
                     } catch (apiError) {
@@ -369,6 +371,7 @@ const Terminal: React.FC<TerminalProps> = ({
                         try {
                           suggestions = await commandFixerAgent(
                             simplifiedCommand,
+                            1, // Non-zero exit code indicates error
                             errorMessage.trim()
                           );
                         } catch (retryError) {
@@ -396,6 +399,7 @@ const Terminal: React.FC<TerminalProps> = ({
                         // Force this to be a Python version check issue
                         suggestions = await commandFixerAgent(
                           "python --v", // Force the command to be Python specific
+                          1, // Non-zero exit code indicates error
                           errorMessage.trim()
                         );
                       } catch (pythonError) {

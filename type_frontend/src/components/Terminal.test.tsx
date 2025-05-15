@@ -251,6 +251,7 @@ describe("Terminal Component", () => {
     await waitFor(() => {
       expect(commandFixerAgent).toHaveBeenCalledWith(
         "mk",
+        1, // Non-zero exit code
         "zsh: command not found: mk"
       );
     });
@@ -291,7 +292,11 @@ describe("Terminal Component", () => {
 
     // Wait for the commandFixerAgent to be called with correct command
     await waitFor(() => {
-      expect(commandFixerAgent).toHaveBeenCalledWith("mk", expect.any(String));
+      expect(commandFixerAgent).toHaveBeenCalledWith(
+        "mk",
+        1,
+        expect.any(String)
+      );
     });
   });
 
@@ -331,6 +336,7 @@ describe("Terminal Component", () => {
     await waitFor(() => {
       expect(commandFixerAgent).toHaveBeenCalledWith(
         "node -ver",
+        1,
         "bad option: -ver"
       );
     });
@@ -372,6 +378,7 @@ describe("Terminal Component", () => {
     await waitFor(() => {
       expect(commandFixerAgent).toHaveBeenCalledWith(
         "python --v",
+        1,
         "unknown option --v"
       );
     });
@@ -445,6 +452,7 @@ describe("Terminal Component", () => {
     await waitFor(() => {
       expect(commandFixerAgent).toHaveBeenCalledWith(
         "mkdi",
+        1,
         "zsh: command not found: mkdi"
       );
     });
@@ -501,6 +509,7 @@ describe("Terminal Component", () => {
       await waitFor(() => {
         expect(commandFixerAgent).toHaveBeenCalledWith(
           "mk",
+          1,
           "zsh: command not found: mk"
         );
       });

@@ -7,11 +7,12 @@ export interface CommandSuggestion {
 
 /**
  * A helper function that uses the OpenRouter API to suggest corrected commands
- * based on the user's original command, exit code, and stderr output.
+ * based on the user's original input, exit code, and error output.
+ * This function is generic and works with any command type (shell, Python, Node.js, etc.).
  *
- * @param userCommand The original command typed by the user
+ * @param userCommand The original input typed by the user
  * @param exitCode The exit code of the command (0 = success, non-zero = failure)
- * @param stderr The standard error output from the command
+ * @param stderr The error output from the command execution
  * @returns A promise that resolves to an array of command suggestions
  */
 export async function commandFixerAgent(
@@ -55,12 +56,14 @@ export async function commandFixerAgent(
     );
   }
 
-  const prompt = `You are an AI assistant that helps users correct invalid commands.
+  const prompt = `You are an AI assistant that helps users correct invalid or failed commands across terminal environments (e.g., shell, Python, Node.js, CLI tools).
 Given the user's original command, its exit code, and the error message, suggest valid alternative commands.
 
 User command: ${userCommand}
 Exit code: ${exitCode}
-Error message: ${stderr.trim()}
+Error message: ${stderr.trim() || `Command failed with exit code ${exitCode}`}
+
+Remember that a non-zero exit code (${exitCode}) indicates failure, even if there's no clear error message.
 
 Respond with multiple corrected commands in this format:
 <corrected command> ~ <short description>
@@ -88,7 +91,7 @@ Do not add any explanation or markdown.`;
         headers: {
           "Content-Type": "application/json",
         },
-        timeout: 10000, // 10-second timeout to prevent hanging
+        timeout: 15000, // 15-second timeout to accommodate more complex commands
       }
     );
 
@@ -128,6 +131,7 @@ Do not add any explanation or markdown.`;
 
 /**
  * Parses the suggestion text from the model into an array of CommandSuggestion objects
+ * Handles any command type (shell, Python, Node.js, etc.)
  */
 function parseSuggestions(text: string): CommandSuggestion[] {
   const suggestions: CommandSuggestion[] = [];

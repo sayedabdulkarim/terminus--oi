@@ -88,61 +88,165 @@ const Terminal: React.FC<TerminalProps> = ({
         data.substring(0, 100) + "..."
       );
 
-      const errorPatterns = [
-        /command not found/i,
-        /command not found:\s\w+/i, // Added pattern for "command not found: cmd" format
-        /permission denied/i,
-        /no such file or directory/i,
-        /cannot access/i,
-        /error:/i,
-        /failed:/i,
-        /bad option:/i, // Colon added to match "bad option: -ver" format
-        /bad option\s+-ver/i, // Specific pattern for "bad option -ver"
-        /bad option/i, // Add pattern without colon to catch variations
-        /\/.*node:.*bad option/i, // Pattern to catch "/path/to/node: bad option"
-        /unknown option/i, // Python often uses this for unknown options
-        /unrecognized option/i,
-        /invalid option/i,
-        /not a directory/i,
-        /not recognized/i,
-        /invalid/i,
-        /missing/i,
-        /unexpected/i,
-        /syntax error/i,
-        /segmentation fault/i,
-        /traceback/i,
-        /exception/i,
-        /cannot/i,
-        /could not/i,
-        /unrecognized command/i,
-        /unknown command/i,
-        /illegal option/i,
-        /bad flag/i,
-        /bad flag syntax/i,
-        /unknown flag/i,
-        /unknown option/i,
-        /python:.*error/i, // Python specific error patterns
-        /ModuleNotFoundError/i,
-        /ImportError/i,
-        /AttributeError/i,
-      ];
-
       try {
-        // Check if any error pattern matches the data
-        const hasError = errorPatterns.some((pattern) => pattern.test(data));
+        // Detect exit codes with enhanced pattern recognition
+        const exitCodePattern = /exit (\d+)/i;
+        const exitCodeMatch = data.match(exitCodePattern);
+        let exitCodeValue = 0;
 
-        if (hasError) {
+        // Check if we found an exit code and it's not zero
+        if (exitCodeMatch && exitCodeMatch[1] !== "0") {
+          exitCodeValue = parseInt(exitCodeMatch[1], 10);
+          console.log(`Detected explicit non-zero exit code: ${exitCodeValue}`);
+        }
+
+        // Consider it an error if we have a non-zero exit code
+        const isNonZeroExit =
+          exitCodeValue > 0 ||
+          (data.includes("exit ") && !data.includes("exit 0"));
+
+        // Also check for common error indicator words when no exit code is available
+        // This is a simplified approach compared to the previous regex patterns
+        const hasErrorText = [
+          "error",
+          "command not found",
+          "permission denied",
+          "failed",
+          "invalid",
+          "not recognized",
+          "unexpected",
+          "traceback",
+          "exception",
+        ].some((errorText) => data.toLowerCase().includes(errorText));
+
+        if (isNonZeroExit || hasErrorText) {
           // Set processing flag to prevent re-entrancy
           processingErrorRef.current = true;
-          console.log("Error detected in terminal output!");
+          console.log(
+            hasErrorText
+              ? "Error text detected in terminal output!"
+              : `Non-zero exit code detected (${exitCodeValue || "unknown"})!`
+          );
 
           // Split by both \n and \r\n to handle different line endings
           const lines = data.split(/\r?\n/).filter((line) => line.trim());
 
-          // Find the specific line containing the error
-          const errorMessage = lines.find((line) =>
-            errorPatterns.some((pattern) => pattern.test(line))
+          // Find the specific line containing an error indicator
+          const errorKeywords = [
+            "error",
+            "command not found",
+            "permission denied",
+            "failed",
+            "invalid",
+            "not recognized",
+            "unexpected",
+            "traceback",
+            "exception",
+          ];
+
+          let errorMessage = lines.find((line) =>
+            errorKeywords.some((keyword) =>
+              line.toLowerCase().includes(keyword)
+            )
           );
+
+          // Specific handling for common CLI tools where errors often appear in stdout
+          // even if they don't match our regular error patterns
+          const commonCliTools = [
+            "npm",
+            "yarn",
+            "npx",
+            "pnpm",
+            "cargo",
+            "pip",
+            "git",
+            "docker",
+          ];
+          const isCommonCliToolOutput = commonCliTools.some((tool) =>
+            lastCommandRef.current.trim().startsWith(tool)
+          );
+
+          if (isCommonCliToolOutput && !errorMessage) {
+            console.log("Checking CLI tool output for error indications");
+
+            // For CLI tools, look for lines containing keywords that suggest errors
+            const cliErrorKeywords = [
+              "error",
+              "fail",
+              "invalid",
+              "not found",
+              "not recognized",
+              "cannot",
+              "couldn't",
+              "missing",
+              "command not found",
+            ];
+
+            // Look for lines containing error keywords
+            errorMessage = lines.find((line) =>
+              cliErrorKeywords.some((keyword) =>
+                line.toLowerCase().includes(keyword)
+              )
+            );
+
+            // Specific handling for Yarn/NPM errors which often have a specific format
+            if (!errorMessage) {
+              // Look for patterns like "error Command "test" not found"
+              const yarnErrorLine = lines.find((line) =>
+                line.match(/error\s+Command\s+".*"\s+not found/i)
+              );
+
+              if (yarnErrorLine) {
+                errorMessage = yarnErrorLine;
+                console.log(
+                  "Found Yarn command not found error:",
+                  errorMessage
+                );
+              }
+
+              // Look for package.json not found errors
+              const packageJsonErrorLine = lines.find(
+                (line) =>
+                  line.includes("package.json") &&
+                  line.toLowerCase().includes("couldn't find")
+              );
+
+              if (packageJsonErrorLine) {
+                errorMessage = packageJsonErrorLine;
+                console.log("Found package.json error:", errorMessage);
+              }
+            }
+
+            if (errorMessage) {
+              console.log("Found CLI tool error message:", errorMessage);
+            }
+          }
+
+          // If no specific error message was identified but we have a non-zero exit code
+          if (!errorMessage && isNonZeroExit) {
+            console.log("Using non-zero exit code as primary error indicator");
+
+            // Use a fallback error message
+            if (lines.length > 0) {
+              // Extract the exit code value if available
+              const exitCodeMatch = data.match(/exit (\d+)/i);
+              const exitCodeValue = exitCodeMatch
+                ? parseInt(exitCodeMatch[1], 10)
+                : 1;
+
+              // Use the first non-empty line as the error message (could be stdout instead of stderr)
+              errorMessage =
+                lines[0].trim() ||
+                `Non-zero exit code (${exitCodeValue}) with no matched error pattern`;
+              console.log("Using first line as error message:", errorMessage);
+            } else {
+              const exitCodeMatch = data.match(/exit (\d+)/i);
+              const exitCodeValue = exitCodeMatch
+                ? parseInt(exitCodeMatch[1], 10)
+                : 1;
+              errorMessage = `Non-zero exit code (${exitCodeValue}) with no output`;
+            }
+          }
 
           if (errorMessage) {
             // Check if this is the same error we just processed
@@ -158,6 +262,20 @@ const Terminal: React.FC<TerminalProps> = ({
             console.log("Error message identified:", errorMessage);
             console.log("Last command was:", lastCommandRef.current);
 
+            // Analyze compound commands (commands with pipes or chains)
+            const isCompoundCommand =
+              lastCommandRef.current.includes("|") ||
+              lastCommandRef.current.includes("&&") ||
+              lastCommandRef.current.includes(";");
+
+            if (isCompoundCommand) {
+              console.log(
+                "Detected compound command with potential for partial failure"
+              );
+              // For compound commands, we need to be careful about which part failed
+              // This is handled by more detailed error analysis below
+            }
+
             // Specific error type detection logging
             if (
               errorMessage === "unknown option --v" ||
@@ -167,6 +285,55 @@ const Terminal: React.FC<TerminalProps> = ({
                 "🐍 Python version flag error detected specifically:",
                 errorMessage
               );
+            }
+
+            // Check for common CLI tools where errors often appear in stdout
+            const commonCliTools = [
+              "npm",
+              "yarn",
+              "npx",
+              "pnpm",
+              "cargo",
+              "pip",
+            ];
+
+            // Detect if this is a CLI tool error
+            const isCommonCliToolError = commonCliTools.some((tool) => {
+              // Check if command starts with the tool name
+              const startsWithTool = lastCommandRef.current.startsWith(tool);
+
+              // Look for error patterns in the output lines
+              const hasErrorIndication = lines.some(
+                (line) =>
+                  line.toLowerCase().includes("error") ||
+                  line.toLowerCase().includes("not found") ||
+                  line.toLowerCase().includes("couldn't find")
+              );
+
+              return startsWithTool && hasErrorIndication;
+            });
+
+            if (isCommonCliToolError) {
+              console.log(
+                "Detected error in common CLI tool output:",
+                lastCommandRef.current
+              );
+
+              // For CLI tool errors, make sure we include the most relevant error line
+              if (!errorMessage || errorMessage.trim() === "") {
+                // Find the most relevant error line
+                const errorLines = lines.filter(
+                  (line) =>
+                    line.toLowerCase().includes("error") ||
+                    line.toLowerCase().includes("not found") ||
+                    line.toLowerCase().includes("couldn't find")
+                );
+
+                if (errorLines.length > 0) {
+                  errorMessage = errorLines[0];
+                  console.log("Using detected CLI error line:", errorMessage);
+                }
+              }
             }
 
             // Special handling for various error types
@@ -284,11 +451,48 @@ const Terminal: React.FC<TerminalProps> = ({
             }
 
             // Format error to include the last command
-            const formattedError = lastCommandRef.current
-              ? `Error after: ${
-                  lastCommandRef.current
-                }\n→ ${errorMessage.trim()}`
-              : errorMessage.trim();
+            let formattedError: string;
+
+            // Special handling for package manager errors
+            if (
+              lastCommandRef.current.startsWith("yarn") ||
+              lastCommandRef.current.startsWith("npm")
+            ) {
+              const cmdParts = lastCommandRef.current.split(" ");
+              const packageManager = cmdParts[0]; // yarn or npm
+
+              // Check if error indicates package.json not found
+              if (
+                errorMessage &&
+                errorMessage.toLowerCase().includes("package.json")
+              ) {
+                formattedError = `${errorMessage.trim()}\nTry: cd into a directory with a package.json file before running ${packageManager} commands`;
+              }
+              // Check if error indicates command not found
+              else if (
+                errorMessage &&
+                errorMessage.toLowerCase().includes("command") &&
+                errorMessage.toLowerCase().includes("not found")
+              ) {
+                formattedError = `${errorMessage.trim()}\nTry checking available scripts in package.json`;
+              }
+              // Default formatting
+              else {
+                formattedError = lastCommandRef.current
+                  ? `Error after: ${lastCommandRef.current}\n→ ${
+                      errorMessage?.trim() || "Unknown error"
+                    }`
+                  : errorMessage?.trim() || "Unknown error";
+              }
+            }
+            // Default formatting for other commands
+            else {
+              formattedError = lastCommandRef.current
+                ? `Error after: ${lastCommandRef.current}\n→ ${
+                    errorMessage?.trim() || "Unknown error"
+                  }`
+                : errorMessage?.trim() || "Unknown error";
+            }
 
             // Use requestAnimationFrame to avoid blocking the UI
             requestAnimationFrame(async () => {
@@ -301,9 +505,9 @@ const Terminal: React.FC<TerminalProps> = ({
                   // Check if we've already processed this exact command+error pair
                   // Add timestamp to avoid permanent caching (reset after 30 seconds)
                   const currentTime = Math.floor(Date.now() / 1000);
-                  const commandErrorPair = `${
-                    lastCommandRef.current
-                  }|||${errorMessage.trim()}|||${Math.floor(currentTime / 30)}`;
+                  const commandErrorPair = `${lastCommandRef.current}|||${
+                    errorMessage?.trim() || "unknown-error"
+                  }|||${Math.floor(currentTime / 30)}`;
 
                   if (processedPairsRef.current.has(commandErrorPair)) {
                     console.log(
@@ -349,13 +553,39 @@ const Terminal: React.FC<TerminalProps> = ({
 
                     let suggestions = [];
                     try {
-                      // Try with the original command first
-                      // Assume non-zero exit code (1) when we detect an error
+                      // Try to extract the actual exit code from the terminal output
+                      // This will be our primary error detection mechanism
+                      const exitCodeMatch = data.match(/exit (\d+)/i);
+                      const exitCode =
+                        exitCodeMatch && exitCodeMatch[1] !== "0"
+                          ? parseInt(exitCodeMatch[1], 10)
+                          : isNonZeroExit
+                          ? 1
+                          : 0; // Use exit code 1 for errors without explicit code
+
+                      // Use error message if available, otherwise provide a detailed fallback
+                      const errorContent =
+                        errorMessage?.trim() ||
+                        (exitCode > 0
+                          ? `Non-zero exit code ${exitCode} detected with command: ${lastCommandRef.current}`
+                          : "");
+
+                      console.log(
+                        `Calling commandFixerAgent with: command="${
+                          lastCommandRef.current
+                        }", exitCode=${exitCode}, error="${errorContent.substring(
+                          0,
+                          50
+                        )}..."`
+                      );
+
                       suggestions = await commandFixerAgent(
                         lastCommandRef.current,
-                        1, // Non-zero exit code indicates error
-                        errorMessage.trim()
+                        exitCode,
+                        errorContent
                       );
+
+                      console.log(suggestions, " hello");
                     } catch (apiError) {
                       console.warn("Initial API call failed:", apiError);
                       addMessage("Retrying with simplified command...", false);
@@ -369,10 +599,34 @@ const Terminal: React.FC<TerminalProps> = ({
                         simplifiedCommand !== lastCommandRef.current
                       ) {
                         try {
+                          // Extract exit code from the original attempt if possible
+                          const exitCodeMatch = data.match(/exit (\d+)/i);
+                          const exitCode =
+                            exitCodeMatch && exitCodeMatch[1] !== "0"
+                              ? parseInt(exitCodeMatch[1], 10)
+                              : isNonZeroExit
+                              ? 1
+                              : 0; // Use exit code 1 for errors without explicit code
+
+                          // Create a detailed error content that includes both the
+                          // original error and information about the simplified retry
+                          const errorContent = `Original error with "${
+                            lastCommandRef.current
+                          }": ${
+                            errorMessage?.trim() ||
+                            (exitCode > 0
+                              ? `Non-zero exit code ${exitCode}`
+                              : "Unknown error")
+                          }. Retrying with simplified command.`;
+
+                          console.log(
+                            `Retrying with simplified command: "${simplifiedCommand}", exitCode=${exitCode}`
+                          );
+
                           suggestions = await commandFixerAgent(
                             simplifiedCommand,
-                            1, // Non-zero exit code indicates error
-                            errorMessage.trim()
+                            exitCode,
+                            errorContent
                           );
                         } catch (retryError) {
                           console.error(
@@ -386,26 +640,59 @@ const Terminal: React.FC<TerminalProps> = ({
                       }
                     }
 
-                    // Extra handling for Python --v errors
-                    if (
-                      errorMessage.trim() === "unknown option --v" &&
-                      !lastCommandRef.current.includes("python") &&
-                      suggestions.length === 0
-                    ) {
+                    // If we have no suggestions, we can try one more time with a simplified approach
+                    if (suggestions.length === 0) {
                       console.log(
-                        "🐍 Python error detected but no suggestions found. Trying explicit python command."
+                        "No suggestions found. Trying a more generic approach."
                       );
+
                       try {
-                        // Force this to be a Python version check issue
-                        suggestions = await commandFixerAgent(
-                          "python --v", // Force the command to be Python specific
-                          1, // Non-zero exit code indicates error
-                          errorMessage.trim()
+                        // Extract exit code from the output if possible
+                        const exitCodeMatch = data.match(/exit (\d+)/i);
+                        const exitCode =
+                          exitCodeMatch && exitCodeMatch[1] !== "0"
+                            ? parseInt(exitCodeMatch[1], 10)
+                            : isNonZeroExit
+                            ? 1
+                            : 0; // Use exit code 1 for errors without explicit code
+
+                        // Create a more generalized and concise error description
+                        // that focuses on the exit code rather than pattern matching
+                        let genericError;
+
+                        if (errorMessage) {
+                          genericError = `Error: ${errorMessage
+                            .trim()
+                            .substring(0, 100)}`;
+                        } else if (exitCode > 0) {
+                          genericError = `Command failed with exit code ${exitCode}`;
+                        } else if (
+                          lastCommandRef.current.startsWith("yarn") ||
+                          lastCommandRef.current.startsWith("npm")
+                        ) {
+                          // For yarn/npm commands with no explicit error, create a more specific message
+                          const command =
+                            lastCommandRef.current.split(" ")[1] || "command";
+                          genericError = `Command "${command}" failed or not found. Check package.json and workspace directory.`;
+                        } else {
+                          genericError = `Command failed`;
+                        }
+
+                        console.log(
+                          `Making final generic attempt with exitCode=${exitCode}`
                         );
-                      } catch (pythonError) {
+
+                        // Try one more time with a very concise request that minimizes any
+                        // language-specific assumptions
+                        suggestions = await commandFixerAgent(
+                          lastCommandRef.current,
+                          exitCode,
+                          genericError
+                        );
+                      } catch (genericError) {
                         console.error(
-                          "Python-specific API call failed:",
-                          pythonError
+                          "Generic fallback API call failed:",
+                          genericError
                         );
                         // Continue with whatever suggestions we have
                       }
@@ -413,7 +700,8 @@ const Terminal: React.FC<TerminalProps> = ({
 
                     console.log({
                       lastCommandRef: lastCommandRef.current,
-                      errorMessage: errorMessage.trim(),
+                      errorMessage:
+                        errorMessage?.trim() || "No specific error message",
                       suggestionsReceived: suggestions.length,
                     });
 
@@ -424,7 +712,7 @@ const Terminal: React.FC<TerminalProps> = ({
                       );
                       addSuggestions(
                         lastCommandRef.current,
-                        errorMessage.trim(),
+                        errorMessage?.trim() || "Command execution error",
                         suggestions
                       );
                     } else {
@@ -462,22 +750,29 @@ const Terminal: React.FC<TerminalProps> = ({
                       );
                       addMessage("Try again in a moment.", false);
                     } else {
-                      // Generic error message with an attempt to simplify the command
+                      // Generic error handling for any type of command or language
                       const baseCommand = lastCommandRef.current.split(" ")[0];
                       const simplifiedSuggestions = [];
 
                       if (baseCommand) {
-                        if (
-                          errorMessage.includes("bad option") ||
-                          errorMessage.includes("unknown option")
-                        ) {
-                          simplifiedSuggestions.push({
-                            command: `${baseCommand} --help`,
-                            description: "Show help for this command",
-                          });
-                        }
+                        // Generic help suggestion works for many command-line tools
+                        simplifiedSuggestions.push({
+                          command: `${baseCommand} --help`,
+                          description: "Show help for this command",
+                        });
 
-                        if (errorMessage.includes("command not found")) {
+                        // Adding version check as it's common across many tools
+                        simplifiedSuggestions.push({
+                          command: `${baseCommand} --version`,
+                          description: "Check version of this tool",
+                        });
+
+                        // General troubleshooting suggestions
+                        if (
+                          errorMessage
+                            .toLowerCase()
+                            .includes("command not found")
+                        ) {
                           simplifiedSuggestions.push({
                             command: `which ${baseCommand}`,
                             description: "Check if this command is installed",
@@ -485,6 +780,33 @@ const Terminal: React.FC<TerminalProps> = ({
                           simplifiedSuggestions.push({
                             command: `echo $PATH`,
                             description: "Check your PATH environment variable",
+                          });
+
+                          // Add installation suggestions for common tools
+                          if (
+                            ["npm", "yarn", "node", "python", "pip"].includes(
+                              baseCommand
+                            )
+                          ) {
+                            simplifiedSuggestions.push({
+                              command: `brew install ${baseCommand}`,
+                              description: `Try installing ${baseCommand} with Homebrew`,
+                            });
+                          }
+                        }
+
+                        // Permission denied errors
+                        if (
+                          errorMessage
+                            .toLowerCase()
+                            .includes("permission denied")
+                        ) {
+                          simplifiedSuggestions.push({
+                            command: `chmod +x ${
+                              lastCommandRef.current.split(" ")[1] || "filename"
+                            }`,
+                            description:
+                              "Make the file executable if it's a script",
                           });
                         }
                       }
@@ -543,7 +865,7 @@ const Terminal: React.FC<TerminalProps> = ({
                   if (fallbackGuidance.length > 0) {
                     addSuggestions(
                       lastCommandRef.current,
-                      errorMessage.trim(),
+                      errorMessage?.trim() || "Command execution error",
                       fallbackGuidance
                     );
                   }

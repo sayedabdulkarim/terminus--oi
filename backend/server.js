@@ -5,6 +5,9 @@ const pty = require("node-pty");
 const os = require("os");
 const cors = require("cors");
 const axios = require("axios"); // Make sure axios is installed
+const executeShellCommand = require("./shell-command-executor");
+const { commandFixerAgent } = require("./utils/commandFixerAgent");
+require("dotenv").config(); // Load environment variables
 
 const app = express();
 app.use(
@@ -52,6 +55,57 @@ app.post("/api/proxy/openrouter", async (req, res) => {
     res.status(error.response?.status || 500).json({
       error: error.message,
       details: error.response?.data || "Unknown error",
+    });
+  }
+});
+
+// New endpoint to execute commands and provide fix suggestions
+app.post("/api/fix-command", async (req, res) => {
+  try {
+    const { command } = req.body;
+
+    if (!command) {
+      return res.status(400).json({ error: "Command is required" });
+    }
+
+    console.log(`Executing command: ${command}`);
+
+    // Execute the command using shell-command-executor
+    const result = await executeShellCommand(command);
+
+    // If command failed (non-zero exit code), call commandFixerAgent for suggestions
+    if (!result.success) {
+      console.log(
+        `Command failed with exit code ${result.exitCode}. Getting suggestions...`
+      );
+      try {
+        const suggestions = await commandFixerAgent(
+          command,
+          result.exitCode,
+          result.stderr
+        );
+
+        return res.json({
+          ...result,
+          suggestions,
+        });
+      } catch (fixerError) {
+        console.error("Error getting command suggestions:", fixerError);
+        return res.json({
+          ...result,
+          suggestions: [],
+          fixerError: fixerError.message,
+        });
+      }
+    }
+
+    // Command succeeded, return result without suggestions
+    res.json(result);
+  } catch (error) {
+    console.error("Command execution error:", error);
+    res.status(500).json({
+      error: error.message,
+      success: false,
     });
   }
 });

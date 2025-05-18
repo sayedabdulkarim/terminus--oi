@@ -3,10 +3,8 @@ import { Terminal as XTerm } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
 import { Socket, io } from "socket.io-client";
-import {
-  commandFixerAgent,
-  CommandSuggestion,
-} from "../utils/commandFixerAgent";
+import axios from "axios";
+import { CommandSuggestion } from "../utils/commandFixerAgent";
 import "xterm/css/xterm.css";
 import "./Terminal.css";
 
@@ -571,7 +569,7 @@ const Terminal: React.FC<TerminalProps> = ({
                           : "");
 
                       console.log(
-                        `Calling commandFixerAgent with: command="${
+                        `Calling backend fix-command API with: command="${
                           lastCommandRef.current
                         }", exitCode=${exitCode}, error="${errorContent.substring(
                           0,
@@ -579,11 +577,29 @@ const Terminal: React.FC<TerminalProps> = ({
                         )}..."`
                       );
 
-                      suggestions = await commandFixerAgent(
-                        lastCommandRef.current,
-                        exitCode,
-                        errorContent
+                      // Call our backend API instead of direct command fixer
+                      const response = await axios.post(
+                        "http://localhost:3001/api/fix-command",
+                        {
+                          command: lastCommandRef.current,
+                        }
                       );
+
+                      console.log("Backend API response:", response.data);
+
+                      if (response.data && response.data.suggestions) {
+                        suggestions = response.data.suggestions;
+                      } else {
+                        // If no suggestions were returned, create a default message
+                        suggestions = [
+                          {
+                            command: "echo 'Command failed'",
+                            description:
+                              response.data.stderr ||
+                              "Command execution failed",
+                          },
+                        ];
+                      }
 
                       console.log(suggestions, " hello");
                     } catch (apiError) {
@@ -606,28 +622,33 @@ const Terminal: React.FC<TerminalProps> = ({
                               ? parseInt(exitCodeMatch[1], 10)
                               : isNonZeroExit
                               ? 1
-                              : 0; // Use exit code 1 for errors without explicit code
-
-                          // Create a detailed error content that includes both the
-                          // original error and information about the simplified retry
-                          const errorContent = `Original error with "${
-                            lastCommandRef.current
-                          }": ${
-                            errorMessage?.trim() ||
-                            (exitCode > 0
-                              ? `Non-zero exit code ${exitCode}`
-                              : "Unknown error")
-                          }. Retrying with simplified command.`;
+                              : 0;
 
                           console.log(
                             `Retrying with simplified command: "${simplifiedCommand}", exitCode=${exitCode}`
                           );
 
-                          suggestions = await commandFixerAgent(
-                            simplifiedCommand,
-                            exitCode,
-                            errorContent
+                          // Call our backend API with the simplified command
+                          const response = await axios.post(
+                            "http://localhost:3001/api/fix-command",
+                            {
+                              command: simplifiedCommand,
+                            }
                           );
+
+                          if (response.data && response.data.suggestions) {
+                            suggestions = response.data.suggestions;
+                          } else {
+                            // If no suggestions were returned, create a default message
+                            suggestions = [
+                              {
+                                command: "echo 'Command failed'",
+                                description:
+                                  response.data.stderr ||
+                                  "Command execution failed",
+                              },
+                            ];
+                          }
                         } catch (retryError) {
                           console.error(
                             "Retry API call also failed:",
@@ -656,39 +677,32 @@ const Terminal: React.FC<TerminalProps> = ({
                             ? 1
                             : 0; // Use exit code 1 for errors without explicit code
 
-                        // Create a more generalized and concise error description
-                        // that focuses on the exit code rather than pattern matching
-                        let genericError;
-
-                        if (errorMessage) {
-                          genericError = `Error: ${errorMessage
-                            .trim()
-                            .substring(0, 100)}`;
-                        } else if (exitCode > 0) {
-                          genericError = `Command failed with exit code ${exitCode}`;
-                        } else if (
-                          lastCommandRef.current.startsWith("yarn") ||
-                          lastCommandRef.current.startsWith("npm")
-                        ) {
-                          // For yarn/npm commands with no explicit error, create a more specific message
-                          const command =
-                            lastCommandRef.current.split(" ")[1] || "command";
-                          genericError = `Command "${command}" failed or not found. Check package.json and workspace directory.`;
-                        } else {
-                          genericError = `Command failed`;
-                        }
-
+                        // Log what we're attempting
                         console.log(
                           `Making final generic attempt with exitCode=${exitCode}`
                         );
 
-                        // Try one more time with a very concise request that minimizes any
-                        // language-specific assumptions
-                        suggestions = await commandFixerAgent(
-                          lastCommandRef.current,
-                          exitCode,
-                          genericError
+                        // Make one final call to the backend API
+                        const response = await axios.post(
+                          "http://localhost:3001/api/fix-command",
+                          {
+                            command: lastCommandRef.current,
+                          }
                         );
+
+                        if (response.data && response.data.suggestions) {
+                          suggestions = response.data.suggestions;
+                        } else {
+                          // If no suggestions were returned, create a simple fallback
+                          suggestions = [
+                            {
+                              command: `${
+                                lastCommandRef.current.split(" ")[0]
+                              } --help`,
+                              description: "Get help for this command",
+                            },
+                          ];
+                        }
                       } catch (genericError) {
                         console.error(
                           "Generic fallback API call failed:",

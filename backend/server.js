@@ -73,6 +73,8 @@ app.post("/api/fix-command", async (req, res) => {
     // Execute the command using shell-command-executor
     const result = await executeShellCommand(command);
 
+    console.log({ result }, " heelloooo");
+
     // If command failed (non-zero exit code), call commandFixerAgent for suggestions
     if (!result.success) {
       console.log(
